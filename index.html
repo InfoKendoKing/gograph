@@ -7,13 +7,12 @@
   <meta name="color-scheme" content="dark">
   <title>European Go · Player connections</title>
   <link rel="icon" href="logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=26e290797c79">
+  <link rel="stylesheet" href="styles.css?v=5023984af8c7">
   <script defer src="graph-model.js?v=b6631f252f7d"></script>
   <script defer src="graph-layout.js?v=131c71dc7c37"></script>
   <script defer src="graph-renderer.js?v=ea8ddaad28a7"></script>
   <script defer src="country-chooser.js?v=ba2b9af55c9a"></script>
-  <script defer src="egd-api.js?v=3d11f47f315a"></script>
-  <script defer src="viewer.js?v=dc67e590c8e2"></script>
+  <script defer src="viewer.js?v=b30d51f7e94e"></script>
 </head>
 <body>
   <header class="masthead">
@@ -27,30 +26,8 @@
       <section class="dataset" aria-label="Dataset">
         <span class="section-label">Dataset</span>
         <p id="description">Loading the published snapshot…</p>
-        <button id="open-file" class="primary" type="button">Open saved games <span aria-hidden="true">↗</span></button>
-        <input id="file" type="file" accept=".egd,.json,application/json,application/xml,text/xml" hidden>
         <button id="reset-data" class="text-button" type="button">Return to published snapshot</button>
         <button id="save-view" class="text-button" type="button" disabled>Save arranged view ↓</button>
-        <p class="fine-print">Open a .egd or exported .json file. Files stay in your browser.</p>
-        <details class="api-import">
-          <summary>Load games from EGD API</summary>
-          <form id="api-form">
-            <label for="api-token">Personal API token</label>
-            <input id="api-token" type="password" autocomplete="off" spellcheck="false" required placeholder="Paste a read-only token">
-            <p class="fine-print">Create a read token in <a href="https://europeangodatabase.eu/docs/devs/guide#api-token-management" target="_blank" rel="noopener noreferrer">EGD Admin → Developer</a>. Sent directly to EGD; never saved or exported.</p>
-            <div class="field-pair">
-              <div><label for="api-start">From</label><input id="api-start" type="date" required></div>
-              <div><label for="api-end">To</label><input id="api-end" type="date" required></div>
-            </div>
-            <label for="api-pin">Player PIN (optional)</label>
-            <input id="api-pin" type="text" inputmode="numeric" pattern="[0-9]+" placeholder="Games involving this player">
-            <label for="api-maximum">Maximum games</label>
-            <input id="api-maximum" type="number" min="1" max="100000" step="1" value="10000" required>
-            <p class="fine-print">Downloads pages of 100 games. If the maximum is reached, the dataset is marked incomplete. Countries and ranks are current API player details.</p>
-            <div class="api-actions"><button id="api-load" type="submit">Load games</button><button id="api-cancel" type="button" hidden>Cancel</button></div>
-            <p id="api-status" class="fine-print" role="status" aria-live="polite"></p>
-          </form>
-        </details>
       </section>
       <section class="filters" aria-label="Graph filters">
         <span class="section-label">View</span>

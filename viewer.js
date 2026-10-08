@@ -3,13 +3,12 @@
   const $ = id => document.getElementById(id);
   const canvas = $("graph"), stage = $("stage"), context = canvas.getContext("2d");
   const countryChooser = EgdCountries.setup($("country"), $("country-toggle"), $("country-options"), $("country-current"), $("country-box"), $("country-clear"));
-  const {validateSnapshot, parseEgd, buildModel, selectGraph, rankValue, searchPlayers, sameCountryBand, sameCountryBands} = EgdGraph;
+  const {validateSnapshot, buildModel, selectGraph, rankValue, searchPlayers, sameCountryBand, sameCountryBands} = EgdGraph;
   const palette = ["#69b4ff", "#ffac69", "#9ae5bd", "#f58fc5", "#e9db78", "#77e0df", "#b19cff", "#fa817e", "#bded84", "#eae8df", "#eebccf", "#caa07a", "#9dcef5", "#67c9a3", "#f7ce9e", "#dba4ed"];
   let snapshot, countryColours = new Map(), model, nodes = [], links = [], nodeMap = new Map();
   let width = 1, height = 1, scale = 1, panX = 0, panY = 0, selected = null, hovered = null;
   let gesture = null, paused = matchMedia("(prefers-reduced-motion: reduce)").matches, ticks = 0, lastTick = 0, dirty = true, loadId = 0;
   let suggestions = [], activeSuggestion = -1, appliedColour = null;
-  let apiController = null;
 
   function status(message, error = false) {
     $("status").textContent = message;
@@ -377,21 +376,7 @@
       status("Saved games.json with your player positions and view settings. Open it to restore this view, or publish it as the website dataset.");
     } catch (error) { status("Could not save the view: " + error.message, true); }
   });
-  $("open-file").addEventListener("click", () => $("file").click());
-  $("file").addEventListener("change", async () => {
-    const file = $("file").files[0]; if (!file) return;
-    apiController?.abort();
-    const id = ++loadId;
-    try {
-      if (file.size > 40 * 1024 * 1024) throw new Error("Choose a saved file smaller than 40 MB.");
-      const contents = await file.text();
-      const data = contents.trimStart().startsWith("<") ? parseEgd(contents) : validateSnapshot(JSON.parse(contents));
-      if (id === loadId) install(data);
-    } catch (error) { if (id === loadId) status("Could not open file: " + error.message, true); }
-    finally { $("file").value = ""; }
-  });
   async function loadPublished() {
-    apiController?.abort();
     const id = ++loadId;
     status("Loading the published snapshot…");
     try {
@@ -401,41 +386,11 @@
       if (id === loadId) install(data);
     } catch (error) {
       if (id === loadId) {
-        status("Could not load the published snapshot. Open a saved .egd file, or serve the docs folder over HTTP. " + error.message, true);
+        status("Could not load the published snapshot. Serve the docs folder over HTTP. " + error.message, true);
         if (!snapshot) { $("description").textContent = "Published snapshot unavailable"; $("counts").textContent = "No games loaded"; $("empty").hidden = false; $("layout-state").textContent = "Waiting for data"; }
       }
     }
   }
-  const apiToday = new Date(), apiWeekAgo = new Date(apiToday);
-  apiWeekAgo.setDate(apiWeekAgo.getDate() - 6);
-  const localDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  $("api-start").value = localDate(apiWeekAgo); $("api-end").value = localDate(apiToday);
-  $("api-form").addEventListener("submit", async event => {
-    event.preventDefault();
-    if (apiController) return;
-    const token = $("api-token").value;
-    $("api-token").value = "";
-    const controller = new AbortController(); apiController = controller;
-    const id = ++loadId;
-    $("api-load").disabled = true; $("api-cancel").hidden = false;
-    $("api-status").classList.remove("error"); $("api-status").textContent = "Contacting EGD…";
-    try {
-      const data = await EgdApi.fetchGames({token, start: $("api-start").value, end: $("api-end").value,
-        pin: $("api-pin").value.trim(), maxGames: Number($("api-maximum").value), signal: controller.signal,
-        onProgress: progress => { $("api-status").textContent = `${progress.loaded.toLocaleString()} / ${progress.total.toLocaleString()} games · page ${progress.page} / ${progress.lastPage}`; }});
-      if (id === loadId) {
-        install(data);
-        $("api-status").textContent = data.description + ". Use Save arranged view to keep this dataset.";
-      }
-    } catch (error) {
-      $("api-status").textContent = controller.signal.aborted ? "Download cancelled. The current dataset has been kept."
-        : "Could not load API games: " + error.message;
-      $("api-status").classList.toggle("error", !controller.signal.aborted);
-    } finally {
-      apiController = null; $("api-load").disabled = false; $("api-cancel").hidden = true;
-    }
-  });
-  $("api-cancel").addEventListener("click", () => apiController?.abort());
   $("reset-data").addEventListener("click", loadPublished);
   pause(paused); requestAnimationFrame(animate); loadPublished();
 })();
