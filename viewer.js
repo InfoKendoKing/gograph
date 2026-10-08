@@ -295,10 +295,7 @@
     if (gesture) {
       if (Math.hypot(point.x - gesture.startX, point.y - gesture.startY) > 4) gesture.moved = true;
       if (gesture.moved) {
-        if (gesture.node) {
-          gesture.node.x = (point.x - width / 2 - panX) / scale; gesture.node.y = (point.y - height / 2 - panY) / scale;
-          gesture.node.vx = gesture.node.vy = 0; ticks = 0;
-        } else { panX += point.x - gesture.x; panY += point.y - gesture.y; }
+        panX += point.x - gesture.x; panY += point.y - gesture.y;
       }
       gesture.x = point.x; gesture.y = point.y; dirty = true;
     } else {

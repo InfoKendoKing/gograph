@@ -21,15 +21,16 @@
     }
     for (const node of nodes) {
       const countryNode = country && belongs(node);
+      const radius = node.radius * (countryNode ? 1.75 : 1);
       context.globalAlpha = country ? (countryNode || neighbours.has(node) ? 1 : 0.1) : focus && !neighbours.has(node) ? 0.17 : 1;
-      context.fillStyle = node.fill; context.beginPath(); context.arc(node.x, node.y, node.radius, 0, Math.PI * 2); context.fill();
-      if (node === focus || node.pin === selected || countryNode) {
+      context.fillStyle = node.fill; context.beginPath(); context.arc(node.x, node.y, radius, 0, Math.PI * 2); context.fill();
+      if (!countryNode && (node === focus || node.pin === selected)) {
         context.strokeStyle = "#f3f5df"; context.lineWidth = 1.5 / scale;
         context.beginPath(); context.arc(node.x, node.y, node.radius + 4 / scale, 0, Math.PI * 2); context.stroke();
       }
       if (names || neighbours.has(node)) {
         context.font = `${11 / scale}px system-ui`; context.textAlign = "left"; context.fillStyle = "#e2e9db";
-        context.fillText(node.name, node.x + node.radius + 5 / scale, node.y + 4 / scale);
+        context.fillText(node.name, node.x + radius + 5 / scale, node.y + 4 / scale);
       }
     }
     context.restore(); context.globalAlpha = 1;
