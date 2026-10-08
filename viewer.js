@@ -7,7 +7,7 @@
   const palette = ["#69b4ff", "#ffac69", "#9ae5bd", "#f58fc5", "#e9db78", "#77e0df", "#b19cff", "#fa817e", "#bded84", "#eae8df", "#eebccf", "#caa07a", "#9dcef5", "#67c9a3", "#f7ce9e", "#dba4ed"];
   let snapshot, countryColours = new Map(), model, nodes = [], links = [], nodeMap = new Map();
   let width = 1, height = 1, scale = 1, panX = 0, panY = 0, selected = null, hovered = null;
-  let gesture = null, paused = matchMedia("(prefers-reduced-motion: reduce)").matches, ticks = 0, lastTick = 0, dirty = true, loadId = 0;
+  let gesture = null, touchPoints = new Map(), paused = matchMedia("(prefers-reduced-motion: reduce)").matches, ticks = 0, lastTick = 0, dirty = true, loadId = 0;
   let suggestions = [], activeSuggestion = -1, appliedColour = null;
 
   function status(message, error = false) {
@@ -28,6 +28,7 @@
     countryColours = new Map(countries.filter(c => c && c !== "??").map((country, i) =>
       [country, palette[i] || `hsl(${(i * 137.508) % 360} 70% 70%)`]));
     $("country").replaceChildren(new Option("All countries", ""), ...countries.map(c => new Option(c || "Unknown", c || "__unknown__")));
+    $("player-country").replaceChildren(new Option("All countries", ""), ...countries.map(c => new Option(c || "Unknown", c || "__unknown__")));
     $("start").value = $("end").value = $("player-search").value = "";
     if (data.layout) {
       const layout = data.layout;
@@ -37,6 +38,7 @@
       $("limit").value = String(layout.maxPlayers);
       $("minimum").value = String(layout.minGames);
       $("country").value = layout.country;
+      $("player-country").value = layout.playerCountry || "";
       $("start").value = layout.start; $("end").value = layout.end;
       // Older saved views used the removed games-played colour mode.
       $("colour").value = layout.colour === "games" ? "same-country" : layout.colour; $("names").checked = layout.names;
@@ -56,7 +58,7 @@
     const minimum = Number($("minimum").value);
     if (!Number.isInteger(minimum) || minimum < 1 || minimum > 100000) { status("Shared games must be a whole number from 1 to 100000.", true); return; }
     model = buildModel(snapshot, start, end);
-    const graph = selectGraph(model, Number($("limit").value), minimum);
+    const graph = selectGraph(model, Number($("limit").value), minimum, $("player-country").value);
     nodes = EgdLayout.createNodes(graph.players, snapshot.layout?.positions);
     for (const node of nodes) node.fill = colour(node);
     appliedColour = $("colour").value;
@@ -81,10 +83,16 @@
   }
   function updateCountryHighlight() {
     const country = $("country").value;
-    $("graph-title").textContent = country ? `${country === "__unknown__" ? "Unknown country" : country} highlighted` : "Player connections";
+    const playerCountry = $("player-country").value;
+    const countryName = value => value === "__unknown__" ? "Unknown country" : value;
+    const title = playerCountry ? `${countryName(playerCountry)} players` : "Player connections";
+    $("graph-title").textContent = country ? `${title} · ${countryName(country)} highlighted` : title;
     if (model) {
-      status(country ? `${nodes.filter(matchesCountry).length.toLocaleString()} visible players from ${country === "__unknown__" ? "an unknown country" : country} highlighted.`
-        : `${model.gameCount.toLocaleString()} unique games in the selected dates. Displayed players must share a qualifying connection.`);
+      const messages = [playerCountry
+        ? `${nodes.length.toLocaleString()} connected players from ${countryName(playerCountry)}.`
+        : `${model.gameCount.toLocaleString()} unique games in the selected dates. Displayed players must share a qualifying connection.`];
+      if (country) messages.push(`${nodes.filter(matchesCountry).length.toLocaleString()} visible players from ${countryName(country)} highlighted.`);
+      status(messages.join(" "));
     }
     renderLegend(); dirty = true;
   }
@@ -283,16 +291,56 @@
     width = nextWidth; height = nextHeight;
     canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio); fit();
   }).observe(stage);
+  function finishPointer(event, cancelled = false) {
+    const wasTouch = touchPoints.delete(event.pointerId);
+    if (gesture?.type === "pinch" && gesture.pointerIds.includes(event.pointerId)) {
+      const remaining = [...touchPoints];
+      if (remaining.length >= 2) {
+        const [[firstId, first], [secondId, second]] = remaining;
+        gesture = {type: "pinch", pointerIds: [firstId, secondId], distance: Math.hypot(second.x - first.x, second.y - first.y),
+          center: {x: (first.x + second.x) / 2, y: (first.y + second.y) / 2}, moved: true};
+      } else if (remaining.length === 1) {
+        const [pointerId, point] = remaining[0];
+        gesture = {...point, pointerId, startX: point.x, startY: point.y, moved: true};
+      } else gesture = null;
+    } else if (gesture?.pointerId === event.pointerId) {
+      if (!cancelled && !gesture.moved) choose(gesture.node ? gesture.node.pin : null);
+      gesture = null;
+    } else if (wasTouch && !touchPoints.size) gesture = null;
+    if (!gesture) canvas.style.cursor = "grab";
+    hovered = null; dirty = true;
+  }
   canvas.addEventListener("pointerdown", event => {
-    if (!event.isPrimary || event.button !== 0) return;
+    const isTouch = event.pointerType === "touch";
+    if (!isTouch && (!event.isPrimary || event.button !== 0)) return;
     const point = position(event); canvas.setPointerCapture(event.pointerId);
-    gesture = {...point, pointerId: event.pointerId, startX: point.x, startY: point.y, node: hit(point.x, point.y), moved: false};
+    if (isTouch) {
+      touchPoints.set(event.pointerId, point);
+      if (touchPoints.size >= 2) {
+        const [[firstId, first], [secondId, second]] = [...touchPoints].slice(0, 2);
+        gesture = {type: "pinch", pointerIds: [firstId, secondId], distance: Math.hypot(second.x - first.x, second.y - first.y),
+          center: {x: (first.x + second.x) / 2, y: (first.y + second.y) / 2}, moved: true};
+      } else gesture = {...point, pointerId: event.pointerId, startX: point.x, startY: point.y, node: hit(point.x, point.y), moved: false};
+    } else gesture = {...point, pointerId: event.pointerId, startX: point.x, startY: point.y, node: hit(point.x, point.y), moved: false};
     $("tooltip").hidden = true; canvas.style.cursor = "grabbing";
   });
   canvas.addEventListener("pointermove", event => {
-    if (gesture && event.pointerId !== gesture.pointerId) return;
     const point = position(event);
+    if (gesture?.type === "pinch") {
+      if (!gesture.pointerIds.includes(event.pointerId)) return;
+      touchPoints.set(event.pointerId, point);
+      const [first, second] = gesture.pointerIds.map(pointerId => touchPoints.get(pointerId));
+      if (!first || !second) return;
+      const distance = Math.hypot(second.x - first.x, second.y - first.y);
+      const center = {x: (first.x + second.x) / 2, y: (first.y + second.y) / 2};
+      if (gesture.distance > 0 && distance > 0) zoom(distance / gesture.distance, center.x, center.y);
+      panX += center.x - gesture.center.x; panY += center.y - gesture.center.y;
+      gesture.distance = distance; gesture.center = center; dirty = true;
+      return;
+    }
+    if (gesture && event.pointerId !== gesture.pointerId) return;
     if (gesture) {
+      if (event.pointerType === "touch") touchPoints.set(event.pointerId, point);
       if (Math.hypot(point.x - gesture.startX, point.y - gesture.startY) > 4) gesture.moved = true;
       if (gesture.moved) {
         panX += point.x - gesture.x; panY += point.y - gesture.y;
@@ -304,13 +352,13 @@
     }
   });
   canvas.addEventListener("pointerup", event => {
-    if (gesture && event.pointerId !== gesture.pointerId) return;
-    if (gesture && !gesture.moved) choose(gesture.node ? gesture.node.pin : null);
-    gesture = null; canvas.style.cursor = "grab";
+    finishPointer(event);
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
   });
-  canvas.addEventListener("pointercancel", () => { gesture = null; hovered = null; dirty = true; });
-  canvas.addEventListener("lostpointercapture", () => { gesture = null; });
+  canvas.addEventListener("pointercancel", event => finishPointer(event, true));
+  canvas.addEventListener("lostpointercapture", event => {
+    if (touchPoints.has(event.pointerId) || gesture?.pointerId === event.pointerId || gesture?.pointerIds?.includes(event.pointerId)) finishPointer(event, true);
+  });
   canvas.addEventListener("pointerleave", () => { hovered = null; $("tooltip").hidden = true; dirty = true; });
   canvas.addEventListener("dblclick", event => {
     const point = position(event), node = hit(point.x, point.y);
@@ -336,6 +384,7 @@
   $("export-svg").addEventListener("click", () => exportGraph("svg"));
   for (const id of ["limit", "minimum", "start", "end"]) $(id).addEventListener("change", rebuild);
   $("country").addEventListener("change", updateCountryHighlight);
+  $("player-country").addEventListener("change", rebuild);
   $("colour").addEventListener("input", updateColours);
   $("colour").addEventListener("change", updateColours);
   $("names").addEventListener("change", () => { dirty = true; });
@@ -367,10 +416,11 @@
       const positions = {...snapshot.layout?.positions};
       for (const node of nodes) positions[node.pin] = [node.x, node.y];
       const saved = {...snapshot, layout: {version: 1, maxPlayers: Number($("limit").value), minGames: Number($("minimum").value),
-        country: $("country").value, start: $("start").value, end: $("end").value, colour: $("colour").value, names: $("names").checked, positions}};
+        country: $("country").value, playerCountry: $("player-country").value, start: $("start").value, end: $("end").value,
+        colour: $("colour").value, names: $("names").checked, positions}};
       validateSnapshot(saved);
       downloadBlob(new Blob([JSON.stringify(saved) + "\n"], {type: "application/json"}), "games.json");
-      status("Saved games.json with your player positions and view settings. Open it to restore this view, or publish it as the website dataset.");
+      status("Saved games.json with your player positions and view settings. Publish it as the website dataset to share this view.");
     } catch (error) { status("Could not save the view: " + error.message, true); }
   });
   async function loadPublished() {

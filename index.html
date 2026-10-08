@@ -8,11 +8,11 @@
   <title>European Go · Player connections</title>
   <link rel="icon" href="logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css?v=5023984af8c7">
-  <script defer src="graph-model.js?v=b6631f252f7d"></script>
+  <script defer src="graph-model.js?v=09a4a331a6cb"></script>
   <script defer src="graph-layout.js?v=131c71dc7c37"></script>
   <script defer src="graph-renderer.js?v=827726f06494"></script>
   <script defer src="country-chooser.js?v=ba2b9af55c9a"></script>
-  <script defer src="viewer.js?v=813f0c89d970"></script>
+  <script defer src="viewer.js?v=11e4c5d83656"></script>
 </head>
 <body>
   <header class="masthead">
@@ -26,6 +26,9 @@
       <section class="dataset" aria-label="Dataset">
         <span class="section-label">Dataset</span>
         <p id="description">Loading the published snapshot…</p>
+        <label for="player-country">Only show players from</label>
+        <select id="player-country"><option value="">All countries</option></select>
+        <p class="fine-print">Creates a graph from one country's players. Highlight is a separate view option.</p>
         <button id="reset-data" class="text-button" type="button">Return to published snapshot</button>
         <button id="save-view" class="text-button" type="button" disabled>Save arranged view ↓</button>
       </section>

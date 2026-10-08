@@ -24,7 +24,8 @@
           || !Number.isInteger(layout.maxPlayers) || layout.maxPlayers < 1 || layout.maxPlayers > 15000
           || !Number.isInteger(layout.minGames) || layout.minGames < 1 || layout.minGames > 100000
           || !["country", "rank", "same-country", "games"].includes(layout.colour) || typeof layout.names !== "boolean"
-          || !["country", "start", "end"].every(key => typeof layout[key] === "string")) {
+          || !["country", "start", "end"].every(key => typeof layout[key] === "string")
+          || (layout.playerCountry != null && typeof layout.playerCountry !== "string")) {
         throw new Error("Invalid saved graph layout.");
       }
       for (const date of [layout.start, layout.end]) {
@@ -104,7 +105,7 @@
     return {players: Array.from(players.values()), links: Array.from(pairs.values()), gameCount: seen.size};
   }
   function selectGraph(model, limit, minimum, country = "") {
-    const players = model.players.filter(player => !country || player.country === country)
+    const players = model.players.filter(player => !country || (country === "__unknown__" ? !player.country : player.country === country))
       .sort((a, b) => b.games - a.games || (a.pin < b.pin ? -1 : a.pin > b.pin ? 1 : 0)).slice(0, limit);
     const pins = new Set(players.map(player => player.pin));
     const links = model.links.filter(link => pins.has(link.a) && pins.has(link.b) && link.games >= minimum);
