@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Explore connections between European Go players in an interactive graph of EGD tournament games.">
+  <meta name="color-scheme" content="dark">
+  <title>European Go · Player connections</title>
+  <link rel="icon" href="logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css?v=26e290797c79">
+  <script defer src="graph-model.js?v=b6631f252f7d"></script>
+  <script defer src="graph-layout.js?v=131c71dc7c37"></script>
+  <script defer src="graph-renderer.js?v=ea8ddaad28a7"></script>
+  <script defer src="country-chooser.js?v=ba2b9af55c9a"></script>
+  <script defer src="egd-api.js?v=3d11f47f315a"></script>
+  <script defer src="viewer.js?v=dc67e590c8e2"></script>
+</head>
+<body>
+  <header class="masthead">
+    <a class="brand" href="./"><img class="logo" src="logo.svg" width="36" height="36" alt=""> European Go</a>
+    <a class="source-link" href="https://europeangodatabase.eu/EGD/" target="_blank" rel="noopener noreferrer">European Go Database ↗</a>
+  </header>
+  <main>
+    <aside class="sidebar">
+      <h1>Player graph</h1>
+      <p class="intro">Explore player connections in EGD tournament games.</p>
+      <section class="dataset" aria-label="Dataset">
+        <span class="section-label">Dataset</span>
+        <p id="description">Loading the published snapshot…</p>
+        <button id="open-file" class="primary" type="button">Open saved games <span aria-hidden="true">↗</span></button>
+        <input id="file" type="file" accept=".egd,.json,application/json,application/xml,text/xml" hidden>
+        <button id="reset-data" class="text-button" type="button">Return to published snapshot</button>
+        <button id="save-view" class="text-button" type="button" disabled>Save arranged view ↓</button>
+        <p class="fine-print">Open a .egd or exported .json file. Files stay in your browser.</p>
+        <details class="api-import">
+          <summary>Load games from EGD API</summary>
+          <form id="api-form">
+            <label for="api-token">Personal API token</label>
+            <input id="api-token" type="password" autocomplete="off" spellcheck="false" required placeholder="Paste a read-only token">
+            <p class="fine-print">Create a read token in <a href="https://europeangodatabase.eu/docs/devs/guide#api-token-management" target="_blank" rel="noopener noreferrer">EGD Admin → Developer</a>. Sent directly to EGD; never saved or exported.</p>
+            <div class="field-pair">
+              <div><label for="api-start">From</label><input id="api-start" type="date" required></div>
+              <div><label for="api-end">To</label><input id="api-end" type="date" required></div>
+            </div>
+            <label for="api-pin">Player PIN (optional)</label>
+            <input id="api-pin" type="text" inputmode="numeric" pattern="[0-9]+" placeholder="Games involving this player">
+            <label for="api-maximum">Maximum games</label>
+            <input id="api-maximum" type="number" min="1" max="100000" step="1" value="10000" required>
+            <p class="fine-print">Downloads pages of 100 games. If the maximum is reached, the dataset is marked incomplete. Countries and ranks are current API player details.</p>
+            <div class="api-actions"><button id="api-load" type="submit">Load games</button><button id="api-cancel" type="button" hidden>Cancel</button></div>
+            <p id="api-status" class="fine-print" role="status" aria-live="polite"></p>
+          </form>
+        </details>
+      </section>
+      <section class="filters" aria-label="Graph filters">
+        <span class="section-label">View</span>
+        <label id="country-label" for="country-toggle">Highlight country</label>
+        <div id="country-box" class="country-box">
+          <select id="country" hidden aria-label="Highlight country"><option value="">All countries</option></select>
+          <div class="country-control">
+            <button id="country-toggle" type="button" role="combobox" aria-haspopup="listbox" aria-controls="country-options" aria-expanded="false" aria-labelledby="country-label country-current" disabled><span id="country-current">All countries</span><span aria-hidden="true">⌄</span></button>
+            <button id="country-clear" type="button" aria-label="Clear country highlight" title="Clear country highlight" hidden>×</button>
+          </div>
+          <ul id="country-options" class="country-options" role="listbox" aria-label="Countries" hidden></ul>
+        </div>
+        <p class="fine-print">Highlight a country's players while keeping the graph in place.</p>
+        <div class="field-pair">
+          <div><label for="limit">Player limit</label><select id="limit"><option>50</option><option>100</option><option>200</option><option>400</option><option>600</option><option>1000</option><option>2000</option><option>4000</option><option>7000</option><option>10000</option><option selected>15000</option></select></div>
+          <div><label for="minimum">Shared games ≥</label><input id="minimum" type="number" min="1" max="100000" value="1" step="1"></div>
+        </div>
+        <div class="field-pair">
+          <div><label for="start">From</label><input id="start" type="date"></div>
+          <div><label for="end">To</label><input id="end" type="date"></div>
+        </div>
+        <p class="fine-print">Dates filter this snapshot. Undated games appear only with both dates cleared.</p>
+        <label for="colour">Colour by</label>
+        <select id="colour"><option value="country">Country</option><option value="rank">Rank</option><option value="same-country">Same-country games (%)</option></select>
+        <label class="check"><input id="names" type="checkbox"> Show player names</label>
+      </section>
+    </aside>
+    <section class="explorer" aria-label="Interactive player graph">
+      <div class="graph-header"><span id="graph-title">Player connections</span><span id="counts">Preparing graph</span></div>
+      <div id="stage" class="stage">
+        <canvas id="graph" tabindex="0" aria-label="Player graph. Drag to pan, scroll to zoom, or select a player. Use the player search below for keyboard access."></canvas>
+        <div id="empty" class="empty" hidden>No connections match these filters.<small>Try more players, different dates, or fewer shared games.</small></div>
+        <div id="tooltip" class="tooltip" hidden></div>
+        <div class="graph-tools" aria-label="Graph controls">
+          <button id="fit" type="button">Fit graph</button>
+          <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
+          <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+          <button id="pause" type="button" aria-pressed="false">Pause</button>
+        </div>
+      </div>
+      <div class="graph-footer"><span>Drag to explore · Scroll to zoom · Select a player for details</span><span id="layout-state">Layout settling</span></div>
+      <div class="export-tools" aria-label="Export current graph view">
+        <button id="export-png" type="button" disabled>Export PNG ↓</button>
+        <button id="export-svg" type="button" disabled>Export SVG ↓</button>
+      </div>
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+      <div class="detail-grid">
+        <section class="legend-section"><span class="section-label">Colours</span><div id="legend" class="legend"></div><p class="fine-print">Node size = games played. Line thickness = games shared.</p><p id="colour-note" class="fine-print"></p></section>
+        <section class="player-section">
+          <label class="section-label" for="player-search">Find a player</label>
+          <div class="player-search-box">
+            <input id="player-search" type="search" role="combobox" aria-autocomplete="list" aria-controls="player-suggestions" aria-expanded="false" placeholder="Search visible players by name or PIN" autocomplete="off">
+            <div id="search-results" class="search-results" hidden>
+              <ul id="player-suggestions" role="listbox" aria-label="Matching players"></ul>
+              <p id="search-feedback" class="fine-print" role="status"></p>
+            </div>
+          </div>
+          <select id="player-select" aria-label="Select a visible player"><option value="">Select a player…</option></select>
+          <div id="player-details"><p class="fine-print">Select a dot or find a player to see their connections.</p></div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <footer class="site-footer"><span>European Go player graph</span><span>Loaded EGD tournament games. Coverage depends on the dataset.</span></footer>
+  <noscript><p class="status">Enable JavaScript to explore the graph.</p></noscript>
+</body>
+</html>
