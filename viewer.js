@@ -9,7 +9,7 @@
   let gesture = null, paused = matchMedia("(prefers-reduced-motion: reduce)").matches, ticks = 0, lastTick = 0, dirty = true, loadId = 0;
   let suggestions = [], activeSuggestion = -1, appliedColour = null;
   let repulsion = 1, gameAttraction = 1, highlightedCountry = "";
-  let profileImageUrl = null, profileImageRequest = 0;
+  let profileImageUrl = null, profileImageRequest = 0, touchPoints = new Map(), pinch = null;
 
   function setRepulsion(value, resume = false) {
     repulsion = value;
@@ -458,17 +458,44 @@
     canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio); fit();
   }).observe(stage);
   canvas.addEventListener("pointerdown", event => {
+    const point = position(event);
+    if (event.pointerType === "touch") {
+      touchPoints.set(event.pointerId, point);
+      if (touchPoints.size === 2) {
+        const [first, second] = [...touchPoints.values()];
+        pinch = {initialDistance: Math.hypot(second.x - first.x, second.y - first.y), startScale: scale, x: (first.x + second.x) / 2, y: (first.y + second.y) / 2};
+        gesture = null;
+        hoverHighlight.clear();
+        canvas.style.cursor = "zoom-in";
+        return;
+      }
+    }
     if (!event.isPrimary || (event.button !== 0 && event.button !== 2) || gesture) return;
     hoverHighlight.clear();
     if (event.button === 2) { event.preventDefault(); canvas.focus({preventScroll: true}); }
-    const point = position(event); canvas.setPointerCapture(event.pointerId);
+    canvas.setPointerCapture(event.pointerId);
     gesture = {...point, pointerId: event.pointerId, button: event.button, startX: point.x, startY: point.y,
       node: event.button === 2 ? null : hit(point.x, point.y), moved: false};
     $("tooltip").hidden = true; canvas.style.cursor = "grabbing";
   });
   canvas.addEventListener("pointermove", event => {
-    if (gesture && event.pointerId !== gesture.pointerId) return;
     const point = position(event);
+    if (event.pointerType === "touch") {
+      if (touchPoints.has(event.pointerId)) touchPoints.set(event.pointerId, point);
+      if (touchPoints.size >= 2 && pinch) {
+        const [first, second] = [...touchPoints.values()];
+        const midX = (first.x + second.x) / 2, midY = (first.y + second.y) / 2;
+        const nextDistance = Math.hypot(second.x - first.x, second.y - first.y) || 1;
+        const worldX = (midX - width / 2 - panX) / scale;
+        const worldY = (midY - height / 2 - panY) / scale;
+        const nextScale = Math.max(0.05, Math.min(8, pinch.startScale * (nextDistance / pinch.initialDistance)));
+        scale = nextScale;
+        panX = midX - width / 2 - worldX * scale;
+        panY = midY - height / 2 - worldY * scale;
+        dirty = true; canvas.style.cursor = "zoom-in"; return;
+      }
+    }
+    if (gesture && event.pointerId !== gesture.pointerId) return;
     if (gesture) {
       if (Math.hypot(point.x - gesture.startX, point.y - gesture.startY) > 4) gesture.moved = true;
       if (gesture.moved) {
@@ -485,13 +512,18 @@
     }
   });
   canvas.addEventListener("pointerup", event => {
+    if (event.pointerType === "touch") touchPoints.delete(event.pointerId);
+    if (touchPoints.size < 2) pinch = null;
     if (gesture && event.pointerId !== gesture.pointerId) return;
     if (gesture && gesture.button === 0 && !gesture.moved) choose(gesture.node ? gesture.node.pin : null);
     gesture = null; canvas.style.cursor = "grab";
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
   });
-  canvas.addEventListener("pointercancel", () => { gesture = null; hoverHighlight.clear(); canvas.style.cursor = "grab"; });
-  canvas.addEventListener("lostpointercapture", () => { gesture = null; hoverHighlight.clear(); });
+  canvas.addEventListener("pointercancel", event => {
+    if (event.pointerType === "touch") touchPoints.delete(event.pointerId);
+    pinch = null; gesture = null; hoverHighlight.clear(); canvas.style.cursor = "grab";
+  });
+  canvas.addEventListener("lostpointercapture", () => { pinch = null; gesture = null; hoverHighlight.clear(); });
   canvas.addEventListener("pointerleave", () => hoverHighlight.clear());
   canvas.addEventListener("contextmenu", event => event.preventDefault());
   canvas.addEventListener("dblclick", event => {
