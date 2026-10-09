@@ -34,7 +34,9 @@
     for (const node of nodes) insert(tree, node, 0);
     return tree;
   }
-  function step(nodes, links, dragged = null) {
+  function step(nodes, links, dragged = null, repulsion = 1, gameAttraction = 1) {
+    if (!Number.isFinite(repulsion) || repulsion < 0.25 || repulsion > 4) throw new RangeError("Repulsion must be between 0.25 and 4.");
+    if (!Number.isFinite(gameAttraction) || gameAttraction < 0 || gameAttraction > 4) throw new RangeError("Repeated-game attraction must be between 0 and 4.");
     if (!nodes.length) return 0;
     const tree = treeFor(nodes);
     function repel(node, cell) {
@@ -45,7 +47,7 @@
           let dx = other.x - node.x, dy = other.y - node.y;
           if (dx === 0 && dy === 0) { dx = node.pin < other.pin ? 0.01 : -0.01; dy = dx; }
           const distance = Math.max(1, Math.hypot(dx, dy));
-          const force = 1500 / Math.max(100, distance * distance) + Math.max(0, node.radius + other.radius + 8 - distance) * 0.08;
+          const force = 1500 * repulsion / Math.max(100, distance * distance) + Math.max(0, node.radius + other.radius + 8 - distance) * 0.08;
           node.fx -= dx / distance * force; node.fy -= dy / distance * force;
         }
         return;
@@ -53,14 +55,17 @@
       const dx = cell.cx / cell.count - node.x, dy = cell.cy / cell.count - node.y, squared = dx * dx + dy * dy;
       const contains = node.x >= cell.x && node.x < cell.x + cell.size && node.y >= cell.y && node.y < cell.y + cell.size;
       if (!contains && cell.size * cell.size < 0.64 * squared && squared > 1600) {
-        const distance = Math.sqrt(squared), force = 1500 * cell.count / squared;
+        const distance = Math.sqrt(squared), force = 1500 * repulsion * cell.count / squared;
         node.fx -= dx / distance * force; node.fy -= dy / distance * force;
       } else for (const child of cell.children) repel(node, child);
     }
     for (const node of nodes) { node.fx = -node.x * 0.0007; node.fy = -node.y * 0.0007; repel(node, tree); }
     for (const link of links) {
       const dx = link.b.x - link.a.x, dy = link.b.y - link.a.y, distance = Math.max(1, Math.hypot(dx, dy));
-      const strength = 0.004 * Math.sqrt(link.games), force = strength * (distance - 110 / Math.sqrt(link.games));
+      // Adjust the extra pull from repeat encounters; single-game links keep
+      // their original strength. 1 preserves the original sqrt(games) weight.
+      const strength = 0.004 * (1 + (Math.sqrt(link.games) - 1) * gameAttraction);
+      const force = strength * (distance - 110 / Math.sqrt(link.games));
       const fx = dx / distance * force, fy = dy / distance * force;
       link.a.fx += fx; link.a.fy += fy; link.b.fx -= fx; link.b.fy -= fy;
     }

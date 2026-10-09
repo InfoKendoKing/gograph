@@ -1,100 +1,142 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Explore connections between European Go players in an interactive graph of EGD tournament games.">
-  <meta name="color-scheme" content="dark">
-  <title>European Go · Player connections</title>
-  <link rel="icon" href="logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=5023984af8c7">
-  <script defer src="graph-model.js?v=09a4a331a6cb"></script>
-  <script defer src="graph-layout.js?v=131c71dc7c37"></script>
-  <script defer src="graph-renderer.js?v=827726f06494"></script>
-  <script defer src="country-chooser.js?v=ba2b9af55c9a"></script>
-  <script defer src="viewer.js?v=11e4c5d83656"></script>
-</head>
-<body>
-  <header class="masthead">
-    <a class="brand" href="./"><img class="logo" src="logo.svg" width="36" height="36" alt=""> European Go</a>
-    <a class="source-link" href="https://europeangodatabase.eu/EGD/" target="_blank" rel="noopener noreferrer">European Go Database ↗</a>
-  </header>
-  <main>
-    <aside class="sidebar">
-      <h1>Player graph</h1>
-      <p class="intro">Explore player connections in EGD tournament games.</p>
-      <section class="dataset" aria-label="Dataset">
-        <span class="section-label">Dataset</span>
-        <p id="description">Loading the published snapshot…</p>
-        <label for="player-country">Only show players from</label>
-        <select id="player-country"><option value="">All countries</option></select>
-        <p class="fine-print">Creates a graph from one country's players. Highlight is a separate view option.</p>
-        <button id="reset-data" class="text-button" type="button">Return to published snapshot</button>
-        <button id="save-view" class="text-button" type="button" disabled>Save arranged view ↓</button>
-      </section>
-      <section class="filters" aria-label="Graph filters">
-        <span class="section-label">View</span>
-        <label id="country-label" for="country-toggle">Highlight country</label>
-        <div id="country-box" class="country-box">
-          <select id="country" hidden aria-label="Highlight country"><option value="">All countries</option></select>
-          <div class="country-control">
-            <button id="country-toggle" type="button" role="combobox" aria-haspopup="listbox" aria-controls="country-options" aria-expanded="false" aria-labelledby="country-label country-current" disabled><span id="country-current">All countries</span><span aria-hidden="true">⌄</span></button>
-            <button id="country-clear" type="button" aria-label="Clear country highlight" title="Clear country highlight" hidden>×</button>
-          </div>
-          <ul id="country-options" class="country-options" role="listbox" aria-label="Countries" hidden></ul>
-        </div>
-        <p class="fine-print">Highlight a country's players while keeping the graph in place.</p>
-        <div class="field-pair">
-          <div><label for="limit">Player limit</label><select id="limit"><option>50</option><option>100</option><option>200</option><option>400</option><option>600</option><option>1000</option><option>2000</option><option>4000</option><option>7000</option><option>10000</option><option selected>15000</option></select></div>
-          <div><label for="minimum">Shared games ≥</label><input id="minimum" type="number" min="1" max="100000" value="1" step="1"></div>
-        </div>
-        <div class="field-pair">
-          <div><label for="start">From</label><input id="start" type="date"></div>
-          <div><label for="end">To</label><input id="end" type="date"></div>
-        </div>
-        <p class="fine-print">Dates filter this snapshot. Undated games appear only with both dates cleared.</p>
-        <label for="colour">Colour by</label>
-        <select id="colour"><option value="country">Country</option><option value="rank">Rank</option><option value="same-country">Same-country games (%)</option></select>
-        <label class="check"><input id="names" type="checkbox"> Show player names</label>
-      </section>
-    </aside>
-    <section class="explorer" aria-label="Interactive player graph">
-      <div class="graph-header"><span id="graph-title">Player connections</span><span id="counts">Preparing graph</span></div>
-      <div id="stage" class="stage">
-        <canvas id="graph" tabindex="0" aria-label="Player graph. Drag to pan, scroll to zoom, or select a player. Use the player search below for keyboard access."></canvas>
-        <div id="empty" class="empty" hidden>No connections match these filters.<small>Try more players, different dates, or fewer shared games.</small></div>
-        <div id="tooltip" class="tooltip" hidden></div>
-        <div class="graph-tools" aria-label="Graph controls">
-          <button id="fit" type="button">Fit graph</button>
-          <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
-          <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
-          <button id="pause" type="button" aria-pressed="false">Pause</button>
-        </div>
-      </div>
-      <div class="graph-footer"><span>Drag to explore · Scroll to zoom · Select a player for details</span><span id="layout-state">Layout settling</span></div>
-      <div class="export-tools" aria-label="Export current graph view">
-        <button id="export-png" type="button" disabled>Export PNG ↓</button>
-        <button id="export-svg" type="button" disabled>Export SVG ↓</button>
-      </div>
-      <div id="status" class="status" role="status" aria-live="polite"></div>
-      <div class="detail-grid">
-        <section class="legend-section"><span class="section-label">Colours</span><div id="legend" class="legend"></div><p class="fine-print">Node size = games played. Line thickness = games shared.</p><p id="colour-note" class="fine-print"></p></section>
-        <section class="player-section">
-          <label class="section-label" for="player-search">Find a player</label>
-          <div class="player-search-box">
-            <input id="player-search" type="search" role="combobox" aria-autocomplete="list" aria-controls="player-suggestions" aria-expanded="false" placeholder="Search visible players by name or PIN" autocomplete="off">
-            <div id="search-results" class="search-results" hidden>
-              <ul id="player-suggestions" role="listbox" aria-label="Matching players"></ul>
-              <p id="search-feedback" class="fine-print" role="status"></p>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Explore connections between European Go players in an interactive graph of EGD tournament games.">
+    <meta name="color-scheme" content="dark">
+    <title>European Go · Player connections</title>
+    <script defer src="graph-hover.js?v=37b913b7825e"></script>
+    <script defer src="graph-colours.js?v=a15ff6398e15"></script>
+    <link rel="icon" href="logo.svg?v=4ded6dde900b" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css?v=c85623fd5c9b">
+    <script defer src="graph-model.js?v=4dab6e68f010"></script>
+    <script defer src="graph-layout.js?v=a2e7abb2ecd2"></script>
+    <script defer src="graph-renderer.js?v=34b1a5bab5e2"></script>
+    <script defer src="graph-gephi.js?v=893a1df2a13e"></script>
+    <script defer src="country-chooser.js?v=0b17a8503f08"></script>
+    <script defer src="egd-api.js?v=9a2f2dd34c93"></script>
+    <script defer src="graph-fullscreen.js?v=04088a72ee13"></script>
+    <script defer src="graph-sharing.js?v=41b93bf4cb73"></script>
+    <script defer src="graph-profile-image.js?v=27588460eb75"></script>
+    <script defer src="viewer.js?v=85ab49c75cf5"></script>
+  </head>
+  <body data-snapshot="data/games.json?v=b479ac88378f">
+    <header class="masthead">
+      <a class="brand" href="./"><img class="logo" src="logo.svg?v=4ded6dde900b" width="36" height="36" alt=""> European Go Graph</a>
+      <a class="source-link" href="https://europeangodatabase.eu/EGD/" target="_blank" rel="noopener noreferrer">European Go Database ↗</a>
+    </header>
+    <main>
+      <aside class="sidebar">
+        <h1>Player graph</h1>
+        <p class="intro">Explore player connections in EGD tournament games.</p>
+        <section class="filters" aria-label="View">
+          <span class="section-label">View</span>
+          <label id="visible-countries-label" for="visible-countries-toggle">Show countries</label>
+          <div id="visible-countries-box" class="country-box">
+            <select id="visible-countries" multiple hidden aria-label="Show countries"><option value="">All countries</option></select>
+            <div class="country-control">
+              <button id="visible-countries-toggle" type="button" role="combobox" aria-haspopup="listbox" aria-controls="visible-countries-options" aria-expanded="false" aria-labelledby="visible-countries-label visible-countries-current" disabled><span id="visible-countries-current">All countries</span><span aria-hidden="true">⌄</span></button>
+              <button id="visible-countries-clear" type="button" aria-label="Show all countries" title="Show all countries" hidden>×</button>
             </div>
+            <ul id="visible-countries-options" class="country-options" role="listbox" aria-multiselectable="true" aria-label="Countries to show" hidden></ul>
           </div>
-          <select id="player-select" aria-label="Select a visible player"><option value="">Select a player…</option></select>
-          <div id="player-details"><p class="fine-print">Select a dot or find a player to see their connections.</p></div>
+          <p class="fine-print">Choose one or more countries to show only their players and connections between them. Clear to show all countries.</p>
+          <label for="colour">Colour by</label>
+          <select id="colour"><option value="country">Country</option><option value="rank">Rank</option><option value="rank-change">Rank change</option><option value="same-country">Games against own country (%)</option><option value="games">Games played</option></select>
+          <div id="legend" class="legend" aria-label="Colour legend"></div>
+          <details id="advanced-filters" class="settings-group">
+            <summary id="advanced-filters-summary">Advanced filters</summary>
+            <div class="field-pair">
+              <div><label for="limit">Player limit</label><select id="limit"><option>50</option><option>100</option><option>200</option><option>400</option><option>600</option><option>1000</option><option>2000</option><option>4000</option><option>7000</option><option>10000</option><option selected>15000</option></select></div>
+              <div><label for="minimum">Minimum games between players</label><input id="minimum" type="number" min="1" max="100000" value="1" step="1"></div>
+            </div>
+            <div class="field-pair">
+              <div><label for="start">From</label><input id="start" type="date"></div>
+              <div><label for="end">To</label><input id="end" type="date"></div>
+            </div>
+            <p class="fine-print">Dates filter this snapshot. Undated games appear only with both dates cleared.</p>
+            <label for="repulsion">Node repulsion <output id="repulsion-value" for="repulsion">1×</output></label>
+            <input id="repulsion" type="range" min="0.25" max="4" step="0.25" value="1">
+            <p class="fine-print">Move right to spread players farther apart. Changing this resumes the layout.</p>
+            <button id="reset-repulsion" class="text-button" type="button">Reset repulsion</button>
+            <label for="game-attraction">Repeated-game attraction <output id="game-attraction-value" for="game-attraction">1×</output></label>
+            <input id="game-attraction" type="range" min="0" max="4" step="0.25" value="1">
+            <p class="fine-print">Move right to pull frequent opponents closer together. Changing this resumes the layout.</p>
+            <button id="reset-game-attraction" class="text-button" type="button">Reset attraction</button>
+          </details>
+          <details class="settings-group">
+            <summary>Names &amp; accessibility</summary>
+            <label class="check"><input id="colour-blind-friendly" type="checkbox"> Colour-blind-friendly colours</label>
+            <label class="check"><input id="names" type="checkbox"> Show player names</label>
+            <label class="check"><input id="hide-overlapping-names" type="checkbox" checked> Hide overlapping names</label>
+            <label class="check"><input id="hover-highlight" type="checkbox" checked> Highlight players on hover</label>
+            <p class="fine-print">Show names only where they fit. Hovered and selected players get priority.</p>
+          </details>
         </section>
-      </div>
-    </section>
-  </main>
-  <footer class="site-footer"><span>European Go player graph</span><span>Loaded EGD tournament games. Coverage depends on the dataset.</span></footer>
-  <noscript><p class="status">Enable JavaScript to explore the graph.</p></noscript>
-</body>
+        <section class="dataset" aria-label="Dataset">
+          <span class="section-label">Loaded games</span>
+          <p id="dataset-summary" class="fine-print">Loading the published snapshot…</p>
+        </section>
+      </aside>
+      <section class="explorer" aria-label="Interactive player graph">
+        <div class="explorer-toolbar">
+          <div class="search-tools">
+            <label class="section-label" for="player-search">Find a player</label>
+            <div class="player-search-box">
+              <input id="player-search" type="search" role="combobox" aria-autocomplete="list" aria-controls="player-suggestions" aria-expanded="false" placeholder="Search visible players by name or PIN" autocomplete="off">
+              <div id="search-results" class="search-results" hidden>
+                <ul id="player-suggestions" role="listbox" aria-label="Matching players"></ul>
+                <p id="search-feedback" class="fine-print" role="status"></p>
+              </div>
+            </div>
+            <details class="browse-players"><summary>Browse all players</summary>
+              <select id="player-select" aria-label="Select a visible player"><option value="">Select a player…</option></select>
+            </details>
+          </div>
+          <details id="export-menu" class="action-menu export-menu">
+            <summary>Save / Export</summary>
+            <div class="action-options">
+              <button id="save-view" type="button" disabled>Save arranged view ↓</button>
+              <button id="export-png" type="button" disabled>Export PNG ↓</button>
+              <button id="export-svg" type="button" disabled>Export SVG ↓</button>
+              <button id="export-gexf" type="button" disabled>Export to Gephi ↓</button>
+            </div>
+          </details>
+        </div>
+        <div class="graph-header"><span id="graph-title">Player connections</span><span id="counts">Preparing graph</span></div>
+        <div id="stage" class="stage">
+          <canvas id="graph" tabindex="0" aria-label="Player graph. Right-drag or drag the background to pan, scroll to zoom, or select a player. Use the player search above for keyboard access."></canvas>
+          <div id="empty" class="empty" hidden>No connections match these filters.<small>Try more players, different dates, or fewer shared games.</small></div>
+          <div id="tooltip" class="tooltip" hidden></div>
+          <div class="graph-tools" aria-label="Graph controls">
+            <button id="fit" type="button">Fit graph</button>
+            <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
+            <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+            <button id="pause" type="button" aria-pressed="false">Pause</button>
+            <button id="fullscreen" type="button" aria-label="Enter fullscreen" aria-pressed="false" aria-controls="stage" title="Show graph fullscreen (F)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                <path class="fullscreen-enter" d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"></path>
+                <path class="fullscreen-exit" d="M3 8h5V3M16 3v5h5M21 16h-5v5M8 21v-5H3"></path>
+              </svg>
+            </button>
+          </div>
+          <aside id="player-panel" class="player-panel" aria-label="Selected player" hidden>
+            <div class="player-panel-header"><span class="section-label">Selected player</span><button id="player-close" type="button" aria-label="Close player details" title="Close player details">×</button></div>
+            <div id="player-details" aria-live="polite"></div>
+          </aside>
+        </div>
+        <div class="graph-footer"><span>Right-drag to pan · Scroll to zoom · Select a player for details</span><span id="layout-state">Layout settling</span></div>
+        <p class="graph-caption">Dots are players; lines connect opponents; thicker lines mean more games together.</p>
+        <details class="graph-guide">
+          <summary>How it works</summary>
+          <p>Each dot is a player. Bigger dots mean more games played in the selected dates. A line joins two players who played each other; thicker lines mean more games together. Colours show the country, rank, or game statistic you choose under <strong>Colour by</strong>.</p>
+          <p>Think of the lines as elastic bands: players who meet often pull closer together, while dots spread out to leave room. Groups form around shared opponents. Positions reflect these connections, and filters can change which players you see. Select a dot to see the player and their opponents. Everything shown comes from the loaded tournament games.</p>
+        </details>
+        <div id="status" class="status" role="status" aria-live="polite"></div>
+      </section>
+    </main>
+    <footer class="site-footer"><span>European Go player graph</span><span>Loaded EGD tournament games. Coverage depends on the dataset.</span></footer>
+    <noscript><p class="status">Enable JavaScript to explore the graph.</p></noscript>
+  </body>
 </html>

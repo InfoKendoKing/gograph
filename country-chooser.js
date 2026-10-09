@@ -5,15 +5,21 @@
     const code = country.toUpperCase() === "UK" ? "gb" : country.toLowerCase();
     return `flags/${/^[a-z]{2}$/.test(code) ? code : "xx"}.svg`;
   }
-  function label(country) {
-    if (!country) return "All countries";
-    if (country === "__unknown__" || country === "??" || country === "XX") return "Unknown country";
+  function countryName(country) {
+    if (!country || country === "__unknown__" || country === "??" || country === "XX") return "Unknown country";
     let name;
     try { name = names?.of(country.toUpperCase() === "UK" ? "GB" : country.toUpperCase()); } catch { /* Unrecognised EGD code. */ }
-    return name && name !== country ? `${country} · ${name}` : country;
+    return name || country;
+  }
+  function label(country) {
+    if (!country) return "All countries";
+    const name = countryName(country);
+    if (name === "Unknown country") return name;
+    return name !== country ? `${country} · ${name}` : country;
   }
   function setup(select, button, list, current, box, clearButton) {
     let active = 0, typeahead = "", lastTyped = 0;
+    const selectedCountries = () => [...select.options].filter(option => option.selected && option.value).map(option => option.value);
     function contents(country) {
       const span = document.createElement("span"), text = document.createElement("span"); span.className = "country-choice";
       if (country) {
@@ -28,7 +34,9 @@
     function highlight() {
       for (const [index, option] of [...list.children].entries()) {
         option.classList.toggle("active", index === active);
-        option.setAttribute("aria-selected", String(select.options[index].value === select.value));
+        option.setAttribute("aria-selected", String(select.multiple
+          ? (select.options[index].value ? select.options[index].selected : !selectedCountries().length)
+          : select.options[index].value === select.value));
       }
       if (!list.hidden && list.children[active]) {
         button.setAttribute("aria-activedescendant", list.children[active].id);
@@ -37,14 +45,27 @@
     }
     function close() { list.hidden = true; button.setAttribute("aria-expanded", "false"); button.removeAttribute("aria-activedescendant"); }
     function open() { active = Math.max(0, select.selectedIndex); list.hidden = false; button.setAttribute("aria-expanded", "true"); highlight(); }
-    function sync() { current.replaceChildren(contents(select.value)); clearButton.hidden = !select.value; highlight(); }
+    function sync() {
+      const countries = select.multiple ? selectedCountries() : (select.value ? [select.value] : []);
+      const summary = contents(countries[0] || "");
+      if (countries.length > 1) summary.lastChild.textContent += ` + ${countries.length - 1}`;
+      current.replaceChildren(summary); current.title = countries.map(label).join(", ") || "All countries";
+      clearButton.hidden = !countries.length; highlight();
+    }
     function choose(index) {
-      select.value = select.options[index].value; select.dispatchEvent(new Event("change")); close(); button.focus({preventScroll: true});
+      if (select.multiple) {
+        if (!select.options[index].value) for (const option of select.options) option.selected = false;
+        else select.options[index].selected = !select.options[index].selected;
+        select.options[0].selected = !selectedCountries().length;
+      } else select.value = select.options[index].value;
+      active = index; select.dispatchEvent(new Event("change"));
+      if (!select.multiple || !select.options[index].value) close();
+      button.focus({preventScroll: true});
     }
     function refresh() {
       close(); list.replaceChildren();
       for (const [index, option] of [...select.options].entries()) {
-        const item = document.createElement("li"); item.id = `country-option-${index}`; item.setAttribute("role", "option");
+        const item = document.createElement("li"); item.id = `${select.id}-option-${index}`; item.setAttribute("role", "option");
         item.append(contents(option.value));
         item.addEventListener("pointerdown", event => event.preventDefault());
         item.addEventListener("click", () => choose(index)); list.append(item);
@@ -77,6 +98,6 @@
     box.addEventListener("focusout", event => { if (!box.contains(event.relatedTarget)) close(); });
     return {refresh, sync};
   }
-  const api = {flagPath, label, setup}; root.EgdCountries = api;
+  const api = {flagPath, label, countryName, setup}; root.EgdCountries = api;
   if (typeof module !== "undefined") module.exports = api;
 })(globalThis);

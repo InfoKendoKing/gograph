@@ -12,6 +12,7 @@
         id tournamentCode round date pinPlayer1 pinPlayer2
         player1 { pin firstName lastName countryCode grade }
         player2 { pin firstName lastName countryCode grade }
+        tournament { placements { data { pinPlayer gradeDeclared precedentRating followingRating } } }
       }
     }
   }`;
@@ -21,12 +22,17 @@
       && Number.isFinite(Date.parse(value + "T00:00:00Z"))
       && new Date(value + "T00:00:00Z").toISOString().slice(0, 10) === value;
   }
-  function player(record, pin) {
+  function player(record, pin, placement) {
     if (!Number.isInteger(pin) || pin < 1) throw new Error("The API returned an invalid player PIN.");
     if (record && record.pin !== pin) throw new Error("The API returned inconsistent player details.");
+    if (placement && (typeof placement.gradeDeclared !== "string"
+        || [placement.precedentRating, placement.followingRating].some(value => value != null && !Number.isFinite(value)))) {
+      throw new Error("The API returned invalid historical rank details.");
+    }
     return {pin: String(pin).padStart(8, "0"),
       name: record ? [record.firstName, record.lastName].filter(Boolean).join(" ").trim() || `PIN ${pin}` : `PIN ${pin}`,
-      country: record?.countryCode || "", grade: record?.grade || ""};
+      country: record?.countryCode || "", grade: placement?.gradeDeclared || "",
+      ...(placement ? {precedentRating: placement.precedentRating ?? null, followingRating: placement.followingRating ?? null} : {})};
   }
   function convertGame(record) {
     if (!record || !Number.isInteger(record.id) || typeof record.tournamentCode !== "string"
@@ -38,13 +44,15 @@
       // EGD sends database timestamps; retain the recorded calendar day.
       date = record.date.slice(0, 10);
     }
+    const placements = record.tournament?.placements?.data || [];
     return {tournament: record.tournamentCode, round: String(record.round), date,
-      first: player(record.player1, record.pinPlayer1), second: player(record.player2, record.pinPlayer2)};
+      first: player(record.player1, record.pinPlayer1, placements.find(p => p.pinPlayer === record.pinPlayer1)),
+      second: player(record.player2, record.pinPlayer2, placements.find(p => p.pinPlayer === record.pinPlayer2))};
   }
   async function fetchGames({token, start, end, pin = "", maxGames = 10000, signal, onProgress = () => {}, fetchImpl = root.fetch}) {
     if (typeof token !== "string" || !token.trim() || /[\r\n]/.test(token)) throw new Error("Enter an EGD read-only API token.");
     if (!validDate(start) || !validDate(end) || start > end) throw new Error("Choose a valid date range, with From on or before To.");
-    if (!Number.isInteger(maxGames) || maxGames < 1 || maxGames > 100000) throw new Error("Maximum games must be between 1 and 100000.");
+    if (!Number.isInteger(maxGames) || maxGames < 1 || maxGames > 1000000) throw new Error("Maximum games must be between 1 and 1000000.");
     if (pin && (!/^\d+$/.test(pin) || Number(pin) < 1 || Number(pin) > 2147483647)) throw new Error("Player PIN must be a positive numeric EGD PIN.");
     const games = [], seen = new Set();
     let total = null, changed = false, capped = false, missingPlayers = 0;
@@ -98,7 +106,9 @@
     if (capped) description += ` · INCOMPLETE: stopped at the ${maxGames.toLocaleString()}-game download limit (${total.toLocaleString()} reported)`;
     if (changed || (!capped && games.length !== total)) description += " · INCOMPLETE: API results changed or overlapped during pagination; download again for a fresh copy";
     if (missingPlayers) description += ` · ${missingPlayers} games have missing player details`;
-    description += " · API countries and ranks are current player details";
+    const missingRanks = games.reduce((count, game) => count + Number(!game.first.grade) + Number(!game.second.grade), 0);
+    description += " · Historical tournament-declared ranks; countries are current player details";
+    if (missingRanks) description += ` · ${missingRanks} player encounters have unavailable historical ranks`;
     return graph.validateSnapshot({version: 1, description, games});
   }
   const api = {fetchGames, convertGame};

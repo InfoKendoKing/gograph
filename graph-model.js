@@ -16,6 +16,9 @@
         if (!player || !["pin", "name", "country", "grade"].every(key => typeof player[key] === "string") || !/^\d+$/.test(player.pin)) {
           throw new Error("Invalid player record or EGD PIN.");
         }
+        for (const key of ["precedentRating", "followingRating"]) {
+          if (player[key] != null && !Number.isFinite(player[key])) throw new Error("Invalid historical player rating.");
+        }
       }
     }
     if (snapshot.layout != null) {
@@ -23,9 +26,16 @@
       if (layout.version !== 1 || !layout.positions || typeof layout.positions !== "object" || Array.isArray(layout.positions)
           || !Number.isInteger(layout.maxPlayers) || layout.maxPlayers < 1 || layout.maxPlayers > 15000
           || !Number.isInteger(layout.minGames) || layout.minGames < 1 || layout.minGames > 100000
-          || !["country", "rank", "same-country", "games"].includes(layout.colour) || typeof layout.names !== "boolean"
-          || !["country", "start", "end"].every(key => typeof layout[key] === "string")
-          || (layout.playerCountry != null && typeof layout.playerCountry !== "string")) {
+          || !["country", "rank", "rank-change", "same-country", "games"].includes(layout.colour) || typeof layout.names !== "boolean"
+          || (layout.hideOverlappingNames !== undefined && typeof layout.hideOverlappingNames !== "boolean")
+          || (layout.colourBlindFriendly !== undefined && typeof layout.colourBlindFriendly !== "boolean")
+          || (layout.hoverHighlight !== undefined && typeof layout.hoverHighlight !== "boolean")
+          || (layout.repulsion !== undefined && (!Number.isFinite(layout.repulsion) || layout.repulsion < 0.25 || layout.repulsion > 4))
+          || (layout.gameAttraction !== undefined && (!Number.isFinite(layout.gameAttraction) || layout.gameAttraction < 0 || layout.gameAttraction > 4))
+          || (layout.spanningTree !== undefined && typeof layout.spanningTree !== "boolean")
+          || (layout.visibleCountries !== undefined && (!Array.isArray(layout.visibleCountries)
+            || !layout.visibleCountries.every(country => typeof country === "string" && country.length > 0)))
+          || !["country", "start", "end"].every(key => typeof layout[key] === "string")) {
         throw new Error("Invalid saved graph layout.");
       }
       for (const date of [layout.start, layout.end]) {
@@ -74,7 +84,7 @@
     return validateSnapshot({version: 1, description: attribute(element, "description"), games});
   }
   function buildModel(snapshot, start = "", end = "") {
-    const players = new Map(), pairs = new Map(), seen = new Set();
+    const players = new Map(), pairs = new Map(), seen = new Set(), rankDates = new Map(), firstRankDates = new Map(), datedEncounters = new Map();
     for (const game of snapshot.games) {
       if ((start || end) && (!game.date || (start && game.date < start) || (end && game.date > end))) continue;
       const a = game.first.pin, b = game.second.pin;
@@ -85,7 +95,21 @@
       seen.add(key);
       for (const player of [game.first, game.second]) {
         if (!players.has(player.pin)) players.set(player.pin, {...player, games: 0, sameCountryGames: 0});
-        players.get(player.pin).games++;
+        const current = players.get(player.pin), date = game.date || "";
+        if (date) datedEncounters.set(player.pin, (datedEncounters.get(player.pin) || 0) + 1);
+        if (!firstRankDates.has(player.pin) || (date && (!firstRankDates.get(player.pin) || date < firstRankDates.get(player.pin)))) {
+          current.firstGrade = player.grade;
+          current.firstRankDate = game.date || null;
+          firstRankDates.set(player.pin, date);
+        }
+        // Dated encounters take priority over undated ones. For same-day games
+        // (or only undated games), use the last record in the loaded dataset.
+        if (!rankDates.has(player.pin) || date >= rankDates.get(player.pin)) {
+          current.grade = player.grade;
+          current.latestRankDate = game.date || null;
+          rankDates.set(player.pin, date);
+        }
+        current.games++;
       }
       if (!pairs.has(pair)) pairs.set(pair, {a, b, games: 0});
       pairs.get(pair).games++;
@@ -101,11 +125,14 @@
     }
     for (const player of players.values()) {
       player.sameCountryPercent = countryKey(player.country) ? 100 * player.sameCountryGames / player.games : null;
+      const first = rankValue(player.firstGrade), latest = rankValue(player.grade);
+      player.rankChange = (datedEncounters.get(player.pin) || 0) >= 2 && first !== null && latest !== null ? latest - first : null;
     }
     return {players: Array.from(players.values()), links: Array.from(pairs.values()), gameCount: seen.size};
   }
   function selectGraph(model, limit, minimum, country = "") {
-    const players = model.players.filter(player => !country || (country === "__unknown__" ? !player.country : player.country === country))
+    const countries = new Set((Array.isArray(country) ? country : country ? [country] : []).map(code => code === "__unknown__" ? "" : code));
+    const players = model.players.filter(player => !countries.size || countries.has(player.country))
       .sort((a, b) => b.games - a.games || (a.pin < b.pin ? -1 : a.pin > b.pin ? 1 : 0)).slice(0, limit);
     const pins = new Set(players.map(player => player.pin));
     const links = model.links.filter(link => pins.has(link.a) && pins.has(link.b) && link.games >= minimum);
@@ -141,7 +168,19 @@
     if (!Number.isFinite(percent) || percent < 0 || percent > 100) return null;
     return sameCountryBands[Math.min(4, Math.floor(percent / 20))];
   }
-  const api = {validateSnapshot, parseEgd, buildModel, selectGraph, rankValue, searchPlayers, sameCountryBand, sameCountryBands};
+  const gamesBands = [
+    {min: 1, label: "1–4 games", colour: "#617ac7"},
+    {min: 5, label: "5–9 games", colour: "#438bb5"},
+    {min: 10, label: "10–24 games", colour: "#329d9c"},
+    {min: 25, label: "25–49 games", colour: "#75be64"},
+    {min: 50, label: "50–99 games", colour: "#e9dc55"},
+    {min: 100, label: "100+ games", colour: "#ffac69"}
+  ];
+  function gamesBand(games) {
+    if (!Number.isInteger(games) || games < 1) return null;
+    return gamesBands.findLast(band => games >= band.min);
+  }
+  const api = {validateSnapshot, parseEgd, buildModel, selectGraph, rankValue, searchPlayers, sameCountryBand, sameCountryBands, gamesBand, gamesBands};
   root.EgdGraph = api;
   if (typeof module !== "undefined") module.exports = api;
 })(globalThis);
