@@ -6,26 +6,26 @@
     <meta name="description" content="Explore connections between European Go players in an interactive graph of EGD tournament games.">
     <meta name="color-scheme" content="dark">
     <title>European Go · Player connections</title>
-    <script defer src="graph-hover.js?v=37b913b7825e"></script>
-    <script defer src="graph-colours.js?v=a15ff6398e15"></script>
-    <link rel="icon" href="logo.svg?v=4ded6dde900b" type="image/svg+xml">
-    <link rel="stylesheet" href="styles.css?v=0aa13ae427df">
-    <script defer src="graph-model.js?v=12e8f4f91e56"></script>
-    <script defer src="graph-data.js?v=d9f391b45e9d"></script>
-    <script defer src="graph-layout.js?v=b2206a3f054f"></script>
-    <script defer src="graph-renderer.js?v=34b1a5bab5e2"></script>
-    <script defer src="graph-gephi.js?v=893a1df2a13e"></script>
-    <script defer src="country-chooser.js?v=0b17a8503f08"></script>
-    <script defer src="egd-api.js?v=4d538b5c2156"></script>
-    <script defer src="graph-fullscreen.js?v=04088a72ee13"></script>
-    <script defer src="graph-sharing.js?v=dc87f0f728b3"></script>
-    <script defer src="graph-profile-image.js?v=27588460eb75"></script>
-    <script defer src="viewer.js?v=f4f57e90a792"></script>
+    <script defer src="src/graph/hover.js?v=37b913b7825e"></script>
+    <script defer src="src/graph/colours.js?v=a15ff6398e15"></script>
+    <link rel="icon" href="assets/images/logo.svg?v=4ded6dde900b" type="image/svg+xml">
+    <link rel="stylesheet" href="assets/css/styles.css?v=0aa13ae427df">
+    <script defer src="src/graph/model.js?v=12e8f4f91e56"></script>
+    <script defer src="src/data/snapshot.js?v=c7a348d17818"></script>
+    <script defer src="src/graph/layout.js?v=b2206a3f054f"></script>
+    <script defer src="src/graph/renderer.js?v=34b1a5bab5e2"></script>
+    <script defer src="src/export/gephi.js?v=afd0444810ea"></script>
+    <script defer src="src/ui/country-chooser.js?v=3e0531c57b0a"></script>
+    <script defer src="src/data/egd-api.js?v=1b4eb52bdd3e"></script>
+    <script defer src="src/ui/fullscreen.js?v=b89cc3daa636"></script>
+    <script defer src="src/export/sharing.js?v=dc87f0f728b3"></script>
+    <script defer src="src/export/profile-image.js?v=ba2802fd8913"></script>
+    <script defer src="src/viewer.js?v=d6ecdd5ae57d"></script>
   </head>
   <body data-snapshot-compressed="data/games.json.gz?v=d6e30b13911c" data-snapshot="data/games.json?v=b84be0af116a">
     <a class="skip-link" href="#player-search">Skip to the graph</a>
     <header class="masthead">
-      <a class="brand" href="./"><img class="logo" src="logo.svg?v=4ded6dde900b" width="32" height="32" alt=""><span>European Go Graph<small>The tournament network</small></span></a>
+      <a class="brand" href="./"><img class="logo" src="assets/images/logo.svg?v=4ded6dde900b" width="32" height="32" alt=""><span>European Go Graph<small>The tournament network</small></span></a>
       <div class="masthead-links"><span id="snapshot-badge" class="snapshot-badge">EGD snapshot</span><a class="source-link" href="https://europeangodatabase.eu/v2" target="_blank" rel="noopener noreferrer">Visit EGD <span aria-hidden="true">↗</span></a></div>
     </header>
     <button id="filters-backdrop" class="filters-backdrop" type="button" aria-label="Close filters" tabindex="-1" hidden></button>

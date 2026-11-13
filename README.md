@@ -2,6 +2,8 @@
 
 A static browser app for exploring connections between players in European Go Database (EGD) tournament games. Dots are players, lines join opponents, and thicker lines represent more games together.
 
+Interact with it here: [https://infokendoking.github.io/gograph/](https://infokendoking.github.io/gograph/)
+
 ## Run locally
 
 From this directory, run:
@@ -48,7 +50,7 @@ The date interval describes the API request and the dates of returned records. L
 
 Maintainer downloads happen outside the browser, there is no API-import panel. Normal viewing needs no token.
 
-For a future refresh, use the read-only importer exported by `egd-api.js` from Node.js 22 or newer. Its `fetchGames` function accepts a read-only `token`, inclusive `start` and `end` dates (`YYYY-MM-DD`), `maxGames`, an optional player `pin`, an abort `signal`, an `onProgress` callback, and `requestTimeoutMs` (30 seconds by default, up to 120 seconds for large requests). Omit `pin` to include all players' games in the requested period. The default download cap is 10,000 games; a complete multi-year refresh must explicitly raise `maxGames` (up to 1,000,000).
+For a future refresh, use the read-only importer exported by `src/data/egd-api.js` from Node.js 22 or newer. Its `fetchGames` function accepts a read-only `token`, inclusive `start` and `end` dates (`YYYY-MM-DD`), `maxGames`, an optional player `pin`, an abort `signal`, an `onProgress` callback, and `requestTimeoutMs` (30 seconds by default, up to 120 seconds for large requests). Omit `pin` to include all players' games in the requested period. The default download cap is 10,000 games; a complete multi-year refresh must explicitly raise `maxGames` (up to 1,000,000).
 
 Keep tokens and temporary download scripts outside the repository. Do not replace the published dataset if the importer marks the result `INCOMPLETE`. Verify the API-reported total and retain the published `layout` if existing positions should be preserved. The `coverage` metadata in the included snapshot records this refresh's requested interval, API total, download time, and monthly counts.
 
@@ -56,15 +58,36 @@ Keep tokens and temporary download scripts outside the repository. Do not replac
 
 `data/games.json` is the editable source. `data/games.json.gz` is a generated, lossless compressed copy. Supported browsers load the smaller archive and decompress it locally. If decompression is unavailable or the archive cannot be loaded or validated, the app falls back to the JSON file.
 
-This works with the Python server above and ordinary static hosting, server-side compression is optional. Hosts that automatically decode gzip are supported too. Publish both dataset files, the HTML/CSS/JavaScript files, and `flags/` together. Regenerate the compressed copy whenever the source JSON changes so both copies stay in sync.
+This works with the Python server above and ordinary static hosting, server-side compression is optional. Hosts that automatically decode gzip are supported too. Publish `index.html` together with the complete `src/`, `assets/`, and `data/` directories. Regenerate the compressed copy whenever the source JSON changes so both copies stay in sync.
 
-## Code map
+## Folder structure
 
-- `viewer.js`: controls, selection, graph state, and exports.
-- `graph-model.js`: snapshot validation, statistics, filters, search, and shortest paths.
-- `graph-data.js`: compressed loading, cached models, and model-building worker.
-- `graph-layout.js` / `graph-layout-worker.js`: force simulation and settling.
-- `graph-renderer.js`: shared canvas and SVG rendering.
-- `egd-api.js`: read-only API download and conversion for maintainer refreshes.
+```text
+.
+├── index.html                 # Browser entry point
+├── README.md
+├── src/
+│   ├── viewer.js              # Application state and event wiring
+│   ├── graph/                 # Model, layout, renderer, colours and hover
+│   ├── data/                  # Snapshot loading/cache and EGD API importer
+│   ├── ui/                    # Country chooser and fullscreen controls
+│   ├── export/                # Gephi export, player images and sharing
+│   └── workers/               # Background layout worker
+├── assets/
+│   ├── css/styles.css
+│   ├── images/logo.svg
+│   └── flags/                 # Bundled flags, attribution and license
+└── data/
+    ├── games.json             # Editable game snapshot and saved layout
+    └── games.json.gz          # Compressed browser download
+```
 
-Flag assets are bundled locally, attribution and licensing are in [flags/README.md](flags/README.md).
+The snapshot loader in `src/data/snapshot.js` also runs as the model-building worker. Browser script order is declared in `index.html`; no bundler is needed. Modules with CommonJS exports can be required using their paths under `src/` for maintainer work.
+
+## Static deployment
+
+Publish `index.html` together with the complete `src/`, `assets/`, and `data/` directories, preserving the folder structure. Paths support deployment at a domain root or a subfolder such as `/gograph/`. Worker imports resolve relative to the worker scripts; flags and snapshots resolve relative to the page.
+
+The local startup command stays the same: run the HTTP server from the repository root. Windows `Zone.Identifier` download metadata is excluded by `.gitignore`.
+
+Flag assets are bundled locally, attribution and licensing are in [assets/flags/README.md](assets/flags/README.md).
