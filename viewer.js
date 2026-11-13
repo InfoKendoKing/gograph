@@ -3,13 +3,23 @@
   const $ = id => document.getElementById(id);
   const canvas = $("graph"), stage = $("stage"), context = canvas.getContext("2d");
   const visibleCountryChooser = EgdCountries.setup($("visible-countries"), $("visible-countries-toggle"), $("visible-countries-options"), $("visible-countries-current"), $("visible-countries-box"), $("visible-countries-clear"));
-  const {validateSnapshot, parseEgd, buildModel, selectGraph, rankValue, searchPlayers, sameCountryBand, sameCountryBands, gamesBand, gamesBands} = EgdGraph;
+  const {validateSnapshot, selectGraph, rankValue, searchPlayers, sameCountryBand, sameCountryBands, gamesBand, gamesBands} = EgdGraph;
   let snapshot, countryIndices = new Map(), model, nodes = [], links = [], nodeMap = new Map();
   let width = 1, height = 1, scale = 1, panX = 0, panY = 0, selected = null, hovered = null;
   let gesture = null, paused = matchMedia("(prefers-reduced-motion: reduce)").matches, ticks = 0, lastTick = 0, dirty = true, loadId = 0;
   let suggestions = [], activeSuggestion = -1, appliedColour = null;
   let repulsion = 1, gameAttraction = 1, highlightedCountry = "";
   let profileImageUrl = null, profileImageRequest = 0, touchPoints = new Map(), pinch = null;
+  let dataSource = null, allModel = null, rebuildId = 0, building = false;
+  let positions = Object.create(null), focusPin = "", pathPins = [], currentPath = null, revealCandidate = null;
+  let layoutWorker = null, layoutVersion = 0, layoutPending = false;
+  const settler = EgdLayout.createSettler();
+  for (const id of ["min-rank", "max-rank"]) {
+    for (const grade of [...Array.from({length: 30}, (_, i) => `${30 - i}k`),
+      ...Array.from({length: 9}, (_, i) => `${i + 1}d`), ...Array.from({length: 9}, (_, i) => `${i + 1}p`)]) {
+      $(id).add(new Option(grade, String(rankValue(grade))));
+    }
+  }
 
   function setRepulsion(value, resume = false) {
     repulsion = value;
@@ -40,7 +50,8 @@
   });
   function pause(value) {
     paused = value;
-    if (!value) ticks = 0;
+    if (!value) { ticks = 0; settler.reset(); }
+    syncLayout();
     $("pause").textContent = value ? "Resume" : "Pause";
     $("pause").setAttribute("aria-pressed", String(value));
     $("layout-state").textContent = value ? "Layout paused" : "Layout settling";
@@ -51,9 +62,21 @@
     start.setFullYear(start.getFullYear() - 2);
     return {start: localDate(start), end: localDate(end)};
   }
-  function install(data) {
-    validateSnapshot(data);
+  async function install(data) {
+    dataSource?.dispose();
+    dataSource = EgdData.createSource(data);
+    const source = dataSource;
+    allModel = null;
+    model = null;
+    ++rebuildId;
+    nodes = []; links = []; nodeMap.clear();
+    positions = Object.assign(Object.create(null), data.layout?.positions);
+    focusPin = data.layout?.focusPin || ""; pathPins = data.layout?.pathPins || [];
+    currentPath = null; revealCandidate = null;
+    $("reveal-player").hidden = true;
     snapshot = data;
+    $("save-view").disabled = $("find-path").disabled = true;
+    $("export-png").disabled = $("export-svg").disabled = $("export-gexf").disabled = true;
     const countries = [...new Set(data.games.flatMap(game => [game.first.country, game.second.country]))].sort();
     countryIndices = new Map(countries.filter(c => c && c !== "??").map((country, i) => [country, i]));
     $("hide-overlapping-names").checked = data.layout?.hideOverlappingNames ?? true;
@@ -73,8 +96,8 @@
       $("limit").value = String(layout.maxPlayers);
       $("minimum").value = String(layout.minGames);
       highlightedCountry = layout.country;
-      $("start").value = layout.start || defaultDateRange().start;
-      $("end").value = layout.end || defaultDateRange().end;
+      $("start").value = layout.start;
+      $("end").value = layout.end;
       $("colour").value = layout.colour; $("names").checked = layout.names;
       for (const option of $("visible-countries").options) option.selected = option.value
         ? (layout.visibleCountries || []).includes(option.value) : !layout.visibleCountries?.length;
@@ -84,8 +107,11 @@
       $("start").value = range.start; $("end").value = range.end;
       $("limit").value = "15000"; $("minimum").value = "1";
       $("colour").value = "country"; $("names").checked = false;
+      pause(matchMedia("(prefers-reduced-motion: reduce)").matches);
     }
-    selected = null;
+    $("min-rank").value = String(data.layout?.minRank ?? "");
+    $("max-rank").value = String(data.layout?.maxRank ?? "");
+    selected = data.layout?.selectedPin || null;
     visibleCountryChooser.refresh();
     let firstDate = "", lastDate = "";
     for (const game of data.games) if (game.date) {
@@ -95,35 +121,78 @@
     const incomplete = /incomplete/i.test(data.description);
     $("dataset-summary").textContent = `${data.games.length.toLocaleString()} games loaded${firstDate ? ` · ${firstDate} to ${lastDate}` : ""}${incomplete ? " · INCOMPLETE dataset" : ""}`;
     $("dataset-summary").classList.toggle("error", incomplete);
-    rebuild();
-    $("save-view").disabled = false;
-    status(`${model.gameCount.toLocaleString()} unique games loaded. Filters explore this dataset.`);
+    status("Preparing player search and graph…");
+    const fullModel = await source.getModel();
+    if (source !== dataSource || !fullModel) return false;
+    allModel = fullModel;
+    $("path-from").value = pathPins[0] ? playerLabel(pathPins[0]) : "";
+    $("path-to").value = pathPins[1] ? playerLabel(pathPins[1]) : "";
+    await rebuild({fitView: true});
+    if (source !== dataSource) return false;
+    if (data.layout?.viewport) {
+      ({scale, panX, panY} = data.layout.viewport); dirty = true;
+    }
+    return true;
   }
-  function rebuild() {
+  function rememberPositions() {
+    for (const node of nodes) positions[node.pin] = [node.x, node.y];
+  }
+  async function rebuild({fitView = false} = {}) {
     if (!snapshot) return;
+    const request = ++rebuildId, source = dataSource;
+    building = false; stage.setAttribute("aria-busy", "false");
+    $("save-view").disabled = !snapshot; $("find-path").disabled = !model;
     const start = $("start").value, end = $("end").value;
     if (start && end && start > end) { status("The start date must be on or before the end date.", true); return; }
     const minimum = Number($("minimum").value);
     if (!Number.isInteger(minimum) || minimum < 1 || minimum > 100000) { status("Shared games must be a whole number from 1 to 100000.", true); return; }
-    model = buildModel(snapshot, start, end);
-    const graph = selectGraph(model, Number($("limit").value), minimum, visibleCountries());
-    nodes = EgdLayout.createNodes(graph.players, snapshot.layout?.positions);
-    for (const node of nodes) node.fill = colour(node);
-    appliedColour = colourSettings();
-    nodeMap = new Map(nodes.map(node => [node.pin, node]));
-    links = graph.links.map(link => ({a: nodeMap.get(link.a), b: nodeMap.get(link.b), games: link.games}));
-    if (!nodeMap.has(selected)) selected = null;
-    gesture = null; hoverHighlight.clear();
-    $("tooltip").hidden = true;
-    ticks = 0;
-    const displayedGames = links.reduce((total, link) => total + link.games, 0);
-    $("counts").textContent = `${nodes.length.toLocaleString()} players / ${links.length.toLocaleString()} connections / ${displayedGames.toLocaleString()} games`;
-    $("empty").hidden = nodes.length > 0;
-    $("export-png").disabled = $("export-svg").disabled = $("export-gexf").disabled = !nodes.length;
-    status(`${model.gameCount.toLocaleString()} unique games in the selected dates. Displayed players must share a qualifying connection.`);
-    $("layout-state").textContent = nodes.length ? (paused ? (snapshot.layout ? "Saved layout · paused" : "Layout paused") : "Layout settling") : "No visible connections";
-    fit(); renderLegend(); renderPlayerOptions(); renderDetails();
-    updateCountryHighlight();
+    const minRank = Number($("min-rank").value), maxRank = Number($("max-rank").value);
+    if (minRank && maxRank && minRank > maxRank) { status("Lowest rank must be no stronger than highest rank.", true); return; }
+    building = true;
+    stage.setAttribute("aria-busy", "true");
+    $("save-view").disabled = true;
+    $("find-path").disabled = true;
+    status("Updating graph…");
+    try {
+      const nextModel = await source.getModel(start, end);
+      if (request !== rebuildId || source !== dataSource || !nextModel) return;
+      model = nextModel;
+      rememberPositions();
+      let graph = selectGraph(model, Number($("limit").value), minimum, visibleCountries(), {minRank, maxRank, focusPin});
+      currentPath = pathPins.length ? EgdGraph.shortestPath(graph.links, ...pathPins) : null;
+      if (currentPath) {
+        const pins = new Set(currentPath), edges = new Set(currentPath.slice(1).map((pin, i) => JSON.stringify([currentPath[i], pin].sort())));
+        graph = {players: graph.players.filter(player => pins.has(player.pin)),
+          links: graph.links.filter(link => edges.has(JSON.stringify([link.a, link.b].sort())))};
+      }
+      const hadNodes = nodes.length > 0;
+      nodes = EgdLayout.createNodes(graph.players, positions);
+      for (const node of nodes) node.fill = colour(node);
+      appliedColour = colourSettings();
+      nodeMap = new Map(nodes.map(node => [node.pin, node]));
+      links = graph.links.map(link => ({a: nodeMap.get(link.a), b: nodeMap.get(link.b), games: link.games}));
+      if (!nodeMap.has(selected)) selected = null;
+      gesture = null; hoverHighlight.clear();
+      $("tooltip").hidden = true;
+      ticks = 0;
+      settler.reset(); syncLayout();
+      const displayedGames = links.reduce((total, link) => total + link.games, 0);
+      $("counts").textContent = `${nodes.length.toLocaleString()} players / ${links.length.toLocaleString()} connections / ${displayedGames.toLocaleString()} games`;
+      $("empty").hidden = nodes.length > 0;
+      $("export-png").disabled = $("export-svg").disabled = $("export-gexf").disabled = !nodes.length;
+      status(`${model.gameCount.toLocaleString()} unique games in the selected dates. Displayed players must share a qualifying connection.`);
+      $("layout-state").textContent = nodes.length ? (paused ? (snapshot.layout ? "Saved layout · paused" : "Layout paused") : "Layout settling") : "No visible connections";
+      if (fitView || !hadNodes) fit();
+      renderLegend(); renderPlayerOptions(); renderDetails(); renderExploration();
+      updateCountryHighlight();
+    } catch (error) {
+      if (request === rebuildId) status("Could not update the graph: " + error.message, true);
+    } finally {
+      if (request === rebuildId) {
+        building = false; stage.setAttribute("aria-busy", "false");
+        $("save-view").disabled = !snapshot; $("find-path").disabled = !model;
+      }
+    }
   }
   function matchesCountry(node) {
     const country = highlightedCountry;
@@ -135,7 +204,8 @@
   function updateCountryHighlight() {
     const country = highlightedCountry;
     const activeFilters = Number(Boolean($("start").value || $("end").value))
-      + Number(Number($("limit").value) !== 15000) + Number(Number($("minimum").value) > 1);
+      + Number(Number($("limit").value) !== 15000) + Number(Number($("minimum").value) > 1)
+      + Number(Boolean($("min-rank").value || $("max-rank").value));
     $("advanced-filters-summary").textContent = `Advanced filters${activeFilters ? ` (${activeFilters} active)` : ""}`;
     $("graph-title").textContent = country ? `${country === "__unknown__" ? "Unknown country" : country} highlighted` : "Player connections";
     if (model) {
@@ -215,10 +285,13 @@
   }
   function renderPlayerOptions() {
     const query = $("player-search").value.trim();
-    const matches = searchPlayers(nodes, query);
-    $("player-select").replaceChildren(new Option(matches.length ? "Select a player…" : "No matching visible players", ""),
-      ...matches.map(node => new Option(`${node.name} · ${node.grade || "?"} · ${node.country || "?"}`, node.pin)));
-    $("player-select").value = matches.some(node => node.pin === selected) ? selected : "";
+    const matches = query ? searchPlayers(allModel?.players || nodes, query) : [];
+    if ($("player-select").closest("details").open) {
+      const visible = searchPlayers(nodes, query);
+      $("player-select").replaceChildren(new Option(visible.length ? "Select a player…" : "No matching visible players", ""),
+        ...visible.map(node => new Option(`${node.name} · ${node.grade || "?"} · ${node.country || "?"}`, node.pin)));
+      $("player-select").value = nodeMap.has(selected) ? selected : "";
+    }
     renderSuggestions(matches, query);
   }
   function hideSuggestions() {
@@ -236,21 +309,79 @@
       const option = document.createElement("li"), meta = document.createElement("small");
       option.id = `player-suggestion-${index}`; option.setAttribute("role", "option"); option.setAttribute("aria-selected", "false");
       option.append(document.createTextNode(node.name));
-      meta.textContent = `${node.country || "Unknown"} · ${node.grade || "Unknown rank"} · PIN ${node.pin}`;
+      meta.textContent = `${node.country || "Unknown"} · ${node.grade || "Unknown rank"} · PIN ${node.pin}${nodeMap.has(node.pin) ? "" : " · Hidden by current filters"}`;
       option.append(meta);
       option.addEventListener("pointerdown", event => event.preventDefault());
       option.addEventListener("click", () => selectSuggestion(index));
       $("player-suggestions").append(option);
     }
     $("search-feedback").textContent = matches.length ? (matches.length > 12 ? `Showing 12 of ${matches.length.toLocaleString()} matches. Keep typing to narrow the list.`
-      : `${matches.length} matching ${matches.length === 1 ? "player" : "players"}`) : "No matching visible players.";
+      : `${matches.length} matching ${matches.length === 1 ? "player" : "players"}`) : "No matching players in this dataset.";
     $("search-results").hidden = false;
     $("player-search").setAttribute("aria-expanded", "true");
   }
   function selectSuggestion(index) {
     const node = suggestions[index]; if (!node) return;
     $("player-search").value = node.name;
-    choose(node.pin); hideSuggestions();
+    if (nodeMap.has(node.pin)) { $("reveal-player").hidden = true; centrePlayer(node.pin); }
+    else {
+      revealCandidate = node.pin;
+      $("reveal-description").textContent = `${node.name} is hidden by the current view. Reveal them by clearing date, country, rank, connection and exploration filters.`;
+      $("reveal-player").hidden = false;
+    }
+    hideSuggestions();
+  }
+  function centrePlayer(pin) {
+    choose(pin);
+    const node = nodeMap.get(pin);
+    if (!node) return;
+    scale = Math.max(scale, 1); panX = -node.x * scale; panY = -node.y * scale; dirty = true;
+  }
+  async function revealPlayer(pin) {
+    const player = EgdSharing.findPlayer(allModel?.players || [], pin);
+    if (!player) { status(`Player PIN ${pin} is not in this dataset.`, true); return; }
+    $("start").value = $("end").value = $("min-rank").value = $("max-rank").value = "";
+    $("limit").value = "15000"; $("minimum").value = "1";
+    for (const option of $("visible-countries").options) option.selected = option.value === "";
+    visibleCountryChooser.refresh();
+    focusPin = ""; pathPins = []; highlightedCountry = "";
+    await rebuild({fitView: true});
+    if (!nodeMap.has(player.pin)) {
+      // Very large snapshots can exceed the display cap. Use this player's local
+      // neighbourhood so even a low-activity player can be revealed.
+      focusPin = player.pin;
+      await rebuild({fitView: true});
+    }
+    if (!nodeMap.has(player.pin)) { status(`${player.name} has no opponent connection in this dataset.`, true); return; }
+    $("reveal-player").hidden = true; revealCandidate = null;
+    $("player-search").value = player.name; centrePlayer(player.pin);
+    status(`Revealed ${player.name}. Filters were cleared.`);
+  }
+  function playerLabel(pin) {
+    const player = allModel?.players.find(player => player.pin === pin);
+    return player ? `${player.name} · ${player.pin}` : pin;
+  }
+  function resolvePathPlayer(value) {
+    const text = value.trim(), pin = /(?:^| · )(\d+)$/.exec(text)?.[1];
+    if (pin) return EgdSharing.findPlayer(allModel?.players || [], pin);
+    const exact = (allModel?.players || []).filter(player => player.name.toLocaleLowerCase() === text.toLocaleLowerCase());
+    return exact.length === 1 ? exact[0] : null;
+  }
+  function renderExploration() {
+    $("exploration-view").hidden = !focusPin && !pathPins.length;
+    $("exploration-description").textContent = focusPin ? `Player and opponents: ${playerLabel(focusPin)}`
+      : currentPath ? `Shortest path · ${currentPath.length - 1} connections` : "No path within the current filters · showing filtered graph";
+    $("path-result").replaceChildren();
+    if (pathPins.length) {
+      $("path-tools").open = true;
+      $("path-status").textContent = currentPath ? `${currentPath.length - 1} opponent connections (fewest possible within these filters).`
+        : "No path found. Both players must have a visible connection; try clearing filters or increasing the player limit.";
+      for (const pin of currentPath || []) {
+        const item = document.createElement("li"), button = document.createElement("button");
+        button.type = "button"; button.textContent = playerLabel(pin);
+        button.addEventListener("click", () => centrePlayer(pin)); item.append(button); $("path-result").append(item);
+      }
+    } else $("path-status").textContent = "";
   }
   function choose(pin) {
     hoverHighlight.clear();
@@ -279,7 +410,7 @@
     info.textContent = `${node.country || "Unknown country"} · ${node.grade || "Unknown rank"} · ${node.games} games in the selected dates · ${sameCountrySummary(node)}`;
     if ($("colour").value === "rank-change") info.textContent += ` · ${rankChangeSummary(node)}`;
     profile.textContent = "Open EGD player profile ↗";
-    profile.href = "https://europeangodatabase.eu/EGD/Player_Card.php?key=" + encodeURIComponent(node.pin);
+    profile.href = EgdSharing.egdProfileUrl(node.pin);
     profile.target = "_blank"; profile.rel = "noopener noreferrer";
     const share = document.createElement("button"), shareStatus = document.createElement("p"), shareUrl = document.createElement("input");
     share.type = "button"; share.className = "share-profile"; share.textContent = "Share profile";
@@ -363,13 +494,36 @@
       item.append(button, count); list.append(item);
     }
     extra.append(label, profile, explanation, list);
-    box.append(heading, info, share, shareStatus, shareUrl, imageTools, extra);
+    const explore = document.createElement("div"), isolate = document.createElement("button"), pathFrom = document.createElement("button"), pathTo = document.createElement("button");
+    explore.className = "player-explore-actions";
+    isolate.type = pathFrom.type = pathTo.type = "button";
+    isolate.textContent = "Show player and opponents";
+    isolate.addEventListener("click", () => {
+      focusPin = node.pin; pathPins = []; rebuild({fitView: true});
+    });
+    pathFrom.textContent = "Start path here"; pathTo.textContent = "End path here";
+    for (const [button, id] of [[pathFrom, "path-from"], [pathTo, "path-to"]]) button.addEventListener("click", () => {
+      $("path-tools").open = true; $(id).value = playerLabel(node.pin); $(id).focus();
+      $("path-tools").scrollIntoView({block: "nearest"});
+    });
+    explore.append(isolate, pathFrom, pathTo);
+    box.append(heading, info, explore, share, shareStatus, shareUrl, imageTools, extra);
   }
   function fit() {
     hoverHighlight.clear();
     if (!nodes.length) { scale = 1; panX = panY = 0; dirty = true; return; }
-    const minX = Math.min(...nodes.map(n => n.x - 35)), maxX = Math.max(...nodes.map(n => n.x + 35));
-    const minY = Math.min(...nodes.map(n => n.y - 35)), maxY = Math.max(...nodes.map(n => n.y + 35));
+    let fittedNodes = nodes;
+    const player = nodeMap.get(selected);
+    if (player) {
+      const neighbours = new Set([player]);
+      for (const link of links) {
+        if (link.a === player) neighbours.add(link.b);
+        if (link.b === player) neighbours.add(link.a);
+      }
+      fittedNodes = [...neighbours];
+    }
+    const minX = Math.min(...fittedNodes.map(n => n.x - 35)), maxX = Math.max(...fittedNodes.map(n => n.x + 35));
+    const minY = Math.min(...fittedNodes.map(n => n.y - 35)), maxY = Math.max(...fittedNodes.map(n => n.y + 35));
     scale = Math.max(0.05, Math.min(2, Math.min(Math.max(80, width - 80) / (maxX - minX), Math.max(80, height - 100) / (maxY - minY))));
     panX = -(minX + maxX) / 2 * scale; panY = -(minY + maxY) / 2 * scale; dirty = true;
   }
@@ -387,7 +541,10 @@
   function position(event) { const rect = canvas.getBoundingClientRect(); return {x: event.clientX - rect.left, y: event.clientY - rect.top}; }
   function hit(x, y) {
     const wx = (x - width / 2 - panX) / scale, wy = (y - height / 2 - panY) / scale;
-    return [...nodes].reverse().find(node => Math.hypot(node.x - wx, node.y - wy) <= Math.max(EgdRenderer.nodeRadius(node, highlightedCountry), 7 / scale));
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const node = nodes[i];
+      if (Math.hypot(node.x - wx, node.y - wy) <= Math.max(EgdRenderer.nodeRadius(node, highlightedCountry), 7 / scale)) return node;
+    }
   }
   function tooltip(node, x, y) {
     const box = $("tooltip"); box.hidden = !node;
@@ -403,8 +560,44 @@
     box.style.top = Math.max(5, Math.min(height - box.offsetHeight - 8, y + 14)) + "px";
   }
   function step() {
-    EgdLayout.step(nodes, links, gesture?.node, repulsion, gameAttraction);
+    if (layoutWorker) {
+      if (layoutPending) return;
+      layoutPending = true;
+      const node = gesture?.node;
+      layoutWorker.postMessage({type: "step", version: layoutVersion, repulsion, gameAttraction,
+        drag: node ? {pin: node.pin, x: node.x, y: node.y} : null});
+    } else recordMovement(EgdLayout.step(nodes, links, gesture?.node, repulsion, gameAttraction));
   }
+  function recordMovement(movement) {
+    ticks++;
+    if (settler.update(movement, Boolean(gesture))) {
+      pause(true); $("layout-state").textContent = "Layout settled · Resume to continue";
+    } else if (ticks >= 2400 && !gesture) {
+      pause(true); $("layout-state").textContent = "Layout paused to save CPU · Resume to continue";
+    }
+    dirty = true;
+  }
+  function syncLayout() {
+    layoutVersion++; layoutPending = false;
+    layoutWorker?.postMessage({type: "init", version: layoutVersion, nodes,
+      links: links.map(link => ({a: link.a.pin, b: link.b.pin, games: link.games}))});
+  }
+  try {
+    layoutWorker = new Worker("graph-layout-worker.js?v=e2757a1f38e3");
+    layoutWorker.onmessage = ({data}) => {
+      if (data.version !== layoutVersion) return;
+      layoutPending = false;
+      if (paused || building) return;
+      nodes.forEach((node, i) => {
+        if (node === gesture?.node) return;
+        [node.x, node.y, node.vx, node.vy] = data.positions.subarray(i * 4, i * 4 + 4);
+      });
+      recordMovement(data.movement);
+    };
+    layoutWorker.onerror = event => {
+      event.preventDefault(); layoutWorker.terminate(); layoutWorker = null; layoutPending = false;
+    };
+  } catch { layoutWorker = null; }
   function graphView() {
     return {width, height, scale, panX, panY, nodes, links, focus: hovered || nodeMap.get(selected), selected,
       country: highlightedCountry, names: $("names").checked, hideOverlappingNames: $("hide-overlapping-names").checked};
@@ -443,9 +636,8 @@
     finally { button.disabled = !nodes.length; }
   }
   function animate(time) {
-    if (!paused && nodes.length && time - lastTick >= 25) {
-      step(); ticks++; lastTick = time; dirty = true;
-      if (ticks >= 2400 && !gesture) { pause(true); $("layout-state").textContent = "Layout settled · Resume to continue"; }
+    if (!paused && !building && nodes.length && time - lastTick >= 25) {
+      step(); lastTick = time;
     }
     if (dirty) { draw(); dirty = false; }
     requestAnimationFrame(animate);
@@ -501,7 +693,7 @@
       if (gesture.moved) {
         if (gesture.node) {
           gesture.node.x = (point.x - width / 2 - panX) / scale; gesture.node.y = (point.y - height / 2 - panY) / scale;
-          gesture.node.vx = gesture.node.vy = 0; ticks = 0;
+          gesture.node.vx = gesture.node.vy = 0; ticks = 0; settler.reset();
         } else { panX += point.x - gesture.x; panY += point.y - gesture.y; }
       }
       gesture.x = point.x; gesture.y = point.y; dirty = true;
@@ -529,7 +721,7 @@
   canvas.addEventListener("dblclick", event => {
     if (event.button !== 0) return;
     const point = position(event), node = hit(point.x, point.y);
-    if (node) window.open("https://europeangodatabase.eu/EGD/Player_Card.php?key=" + encodeURIComponent(node.pin), "_blank", "noopener,noreferrer");
+    if (node) window.open(EgdSharing.egdProfileUrl(node.pin), "_blank", "noopener,noreferrer");
   });
   canvas.addEventListener("wheel", event => { event.preventDefault(); const point = position(event); zoom(Math.exp(-event.deltaY * 0.0015), point.x, point.y); }, {passive: false});
   canvas.addEventListener("keydown", event => {
@@ -558,7 +750,7 @@
   $("export-png").addEventListener("click", () => exportGraph("png"));
   $("export-svg").addEventListener("click", () => exportGraph("svg"));
   $("export-gexf").addEventListener("click", () => exportGraph("gexf"));
-  for (const id of ["limit", "minimum", "start", "end"]) $(id).addEventListener("change", rebuild);
+  for (const id of ["limit", "minimum", "start", "end", "min-rank", "max-rank"]) $(id).addEventListener("change", rebuild);
   $("visible-countries").addEventListener("change", rebuild);
   $("colour").addEventListener("input", updateColours);
   $("colour").addEventListener("change", updateColours);
@@ -571,6 +763,45 @@
   $("game-attraction").addEventListener("input", () => setGameAttraction(Number($("game-attraction").value), true));
   $("reset-game-attraction").addEventListener("click", () => setGameAttraction(1, true));
   $("player-search").addEventListener("input", renderPlayerOptions);
+  $("player-select").closest("details").addEventListener("toggle", renderPlayerOptions);
+  $("reveal-player-button").addEventListener("click", () => {
+    if (revealCandidate) revealPlayer(revealCandidate);
+  });
+  for (const id of ["path-from", "path-to"]) $(id).addEventListener("input", () => {
+    const matches = searchPlayers(allModel?.players || [], $(id).value).slice(0, 20);
+    $("path-players").replaceChildren(...matches.map(player => new Option(`${player.country || "?"} · ${player.grade || "?"}`, playerLabel(player.pin))));
+  });
+  $("path-form").addEventListener("submit", async event => {
+    event.preventDefault();
+    let from, to;
+    try { from = resolvePathPlayer($("path-from").value); to = resolvePathPlayer($("path-to").value); }
+    catch { /* Invalid PINs receive the same actionable message as ambiguous names. */ }
+    if (!from || !to) {
+      $("path-status").textContent = "Choose both players from the suggestions, enter their PINs, or use unique full names."; return;
+    }
+    $("path-from").value = playerLabel(from.pin); $("path-to").value = playerLabel(to.pin);
+    focusPin = ""; pathPins = [from.pin, to.pin];
+    await rebuild({fitView: true});
+  });
+  $("clear-exploration").addEventListener("click", () => {
+    focusPin = ""; pathPins = []; rebuild({fitView: true});
+  });
+  $("open-view").addEventListener("click", () => $("view-file").click());
+  $("view-file").addEventListener("change", async () => {
+    const file = $("view-file").files[0];
+    $("view-file").value = "";
+    if (!file) return;
+    const id = ++loadId;
+    status(`Opening ${file.name}…`);
+    try {
+      // Validate before replacing the current dataset so malformed files keep the
+      // active graph and its positions intact.
+      const data = validateSnapshot(JSON.parse(await file.text()));
+      if (id === loadId && await install(data) && id === loadId) status(`Opened ${file.name}. Saved dates and view settings restored.`);
+    } catch (error) {
+      if (id === loadId) status("Could not open this saved view: " + error.message, true);
+    }
+  });
   $("player-search").addEventListener("focus", renderPlayerOptions);
   $("player-search").addEventListener("blur", hideSuggestions);
   $("player-search").addEventListener("keydown", event => {
@@ -595,31 +826,28 @@
   $("save-view").addEventListener("click", () => {
     if (!snapshot) return;
     try {
-      const positions = {...snapshot.layout?.positions};
-      for (const node of nodes) positions[node.pin] = [node.x, node.y];
+      rememberPositions();
       const saved = {...snapshot, layout: {version: 1, maxPlayers: Number($("limit").value), minGames: Number($("minimum").value),
         country: highlightedCountry, start: $("start").value, end: $("end").value, colour: $("colour").value, names: $("names").checked,
         hideOverlappingNames: $("hide-overlapping-names").checked, colourBlindFriendly: $("colour-blind-friendly").checked,
-        hoverHighlight: $("hover-highlight").checked, repulsion, gameAttraction, visibleCountries: visibleCountries(), positions}};
+        hoverHighlight: $("hover-highlight").checked, repulsion, gameAttraction, visibleCountries: visibleCountries(), positions,
+        minRank: Number($("min-rank").value) || "", maxRank: Number($("max-rank").value) || "",
+        focusPin, selectedPin: selected || "", ...(pathPins.length ? {pathPins} : {}), viewport: {scale, panX, panY}}};
       validateSnapshot(saved);
       downloadBlob(new Blob([JSON.stringify(saved) + "\n"], {type: "application/json"}), "games.json");
       status("Saved games.json with your player positions and view settings. Open it to restore this view, or publish it as the website dataset.");
     } catch (error) { status("Could not save the view: " + error.message, true); }
   });
-  function openLinkedPlayer() {
+  async function openLinkedPlayer() {
     let pin;
     try { pin = EgdSharing.playerPin(location.href); }
     catch (error) { status("Cannot open the shared profile: " + error.message, true); return; }
     if (!pin) return;
     let node = EgdSharing.findPlayer(nodes, pin);
     if (!node) {
-      const player = EgdSharing.findPlayer(buildModel(snapshot).players, pin);
+      const player = EgdSharing.findPlayer(allModel.players, pin);
       if (!player) { status(`Player PIN ${pin} is not in the published dataset.`, true); return; }
-      // A shared profile must remain reachable even when the saved view hides it.
-      $("start").value = $("end").value = "";
-      $("limit").value = "15000"; $("minimum").value = "1";
-      for (const option of $("visible-countries").options) option.selected = option.value === "";
-      visibleCountryChooser.refresh(); rebuild();
+      await revealPlayer(player.pin);
       node = EgdSharing.findPlayer(nodes, pin);
       if (!node) { status(`Player PIN ${pin} has no visible connection in this dataset.`, true); return; }
     }
@@ -634,13 +862,11 @@
     const id = ++loadId;
     status("Loading the published snapshot…");
     try {
-      const response = await fetch(document.body.dataset.snapshot || "data/games.json", {cache: "no-cache"});
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = validateSnapshot(await response.json());
-      if (id === loadId) { install(data); openLinkedPlayer(); }
+      const data = await EgdData.loadSnapshot(document.body.dataset.snapshot || "data/games.json", document.body.dataset.snapshotCompressed);
+      if (id === loadId && await install(data) && id === loadId) await openLinkedPlayer();
     } catch (error) {
       if (id === loadId) {
-        status("Could not load the published snapshot. Serve the docs folder over HTTP. " + error.message, true);
+        status("Could not load the published snapshot. Serve the project folder over HTTP, or open a saved view. " + error.message, true);
         if (!snapshot) { $("dataset-summary").textContent = "Published snapshot unavailable"; $("counts").textContent = "No games loaded"; $("empty").hidden = false; $("layout-state").textContent = "Waiting for data"; }
       }
     }

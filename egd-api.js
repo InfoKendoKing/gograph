@@ -49,10 +49,11 @@
       first: player(record.player1, record.pinPlayer1, placements.find(p => p.pinPlayer === record.pinPlayer1)),
       second: player(record.player2, record.pinPlayer2, placements.find(p => p.pinPlayer === record.pinPlayer2))};
   }
-  async function fetchGames({token, start, end, pin = "", maxGames = 10000, signal, onProgress = () => {}, fetchImpl = root.fetch}) {
+  async function fetchGames({token, start, end, pin = "", maxGames = 10000, requestTimeoutMs = 30000, signal, onProgress = () => {}, fetchImpl = root.fetch}) {
     if (typeof token !== "string" || !token.trim() || /[\r\n]/.test(token)) throw new Error("Enter an EGD read-only API token.");
     if (!validDate(start) || !validDate(end) || start > end) throw new Error("Choose a valid date range, with From on or before To.");
     if (!Number.isInteger(maxGames) || maxGames < 1 || maxGames > 1000000) throw new Error("Maximum games must be between 1 and 1000000.");
+    if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1000 || requestTimeoutMs > 120000) throw new Error("Request timeout must be between 1000 and 120000 milliseconds.");
     if (pin && (!/^\d+$/.test(pin) || Number(pin) < 1 || Number(pin) > 2147483647)) throw new Error("Player PIN must be a positive numeric EGD PIN.");
     const games = [], seen = new Set();
     let total = null, changed = false, capped = false, missingPlayers = 0;
@@ -61,7 +62,7 @@
       const controller = new AbortController();
       const abort = () => controller.abort(signal.reason);
       signal?.addEventListener("abort", abort, {once: true});
-      const timeout = setTimeout(() => controller.abort(new Error("The API request timed out. Try a shorter date range.")), 30000);
+      const timeout = setTimeout(() => controller.abort(new Error("The API request timed out. Try a shorter date range.")), requestTimeoutMs);
       let response, body;
       try {
         response = await fetchImpl(endpoint, {method: "POST", headers: {Authorization: "Bearer " + token.trim(), "Content-Type": "application/json", Accept: "application/json"},

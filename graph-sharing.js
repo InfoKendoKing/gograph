@@ -17,6 +17,9 @@
     link.searchParams.set("pin", normalisePin(pin));
     return link.href;
   }
+  function egdProfileUrl(pin) {
+    return "https://europeangodatabase.eu/v2/players/" + Number(normalisePin(pin));
+  }
   function findPlayer(players, pin) {
     const key = normalisePin(pin);
     return players.find(player => normalisePin(player.pin) === key);
@@ -48,7 +51,7 @@
       return {method: "shared"};
     } catch (error) {return {method: error.name === "AbortError" ? "cancelled" : "download"};}
   }
-  const api = {normalisePin, playerPin, profileUrl, findPlayer, shareProfile, shareImage};
+  const api = {normalisePin, playerPin, profileUrl, egdProfileUrl, findPlayer, shareProfile, shareImage};
   root.EgdSharing = api;
   if (typeof module !== "undefined") module.exports = api;
 })(globalThis);

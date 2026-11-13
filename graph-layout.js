@@ -80,7 +80,18 @@
     }
     return movement / nodes.length;
   }
-  const api = {createNodes, step};
+  function createSettler() {
+    let ticks = 0, quiet = 0;
+    return {
+      reset() { ticks = quiet = 0; },
+      update(movement, dragging = false) {
+        ticks++;
+        quiet = !dragging && Number.isFinite(movement) && movement < 0.08 ? quiet + 1 : 0;
+        return ticks >= 80 && quiet >= 40;
+      }
+    };
+  }
+  const api = {createNodes, step, createSettler};
   root.EgdLayout = api;
   if (typeof module !== "undefined") module.exports = api;
 })(globalThis);

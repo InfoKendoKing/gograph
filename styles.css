@@ -124,6 +124,17 @@ summary { cursor: pointer; }
 .profile-image-actions button { flex: 1; padding: 8px; font-size: 12px; }
 .graph-caption { font-size: 12px; color: var(--muted); margin: 0 0 6px; }
 .graph-guide > summary { font-size: 11px; color: var(--accent); }
+.path-tools { margin: 0 0 18px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
+.path-tools > summary { color: var(--accent); }
+.path-tools button, .exploration-view button, .reveal-player button { font-size: 12px; }
+#path-result { padding-left: 22px; }
+#path-result:empty { display: none; }
+#path-result button { padding: 3px 6px; margin-bottom: 3px; }
+.exploration-view { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; font-size: 12px; }
+.reveal-player { padding: 10px; margin-bottom: 10px; border: 1px solid var(--accent); border-radius: 6px; }
+.reveal-player p { margin-top: 0; }
+.player-explore-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.player-explore-actions button { font-size: 11px; padding: 7px 10px; }
 @media (min-width: 1450px) { main { grid-template-columns: 350px minmax(0, 1fr); } .sidebar { padding-right: 38px; } }
 @media (max-width: 950px) { main { grid-template-columns: 270px minmax(0, 1fr); } .sidebar { padding: 26px 22px; } .explorer { padding: 24px 18px; } .graph-header { flex-wrap: wrap; } }
 @media (max-width: 650px) { .masthead { padding: 18px; min-height: 70px; gap: 12px; } .source-link { font-size: 10px; max-width: 115px; text-align: right; } .brand { font-size: 14px; } main { display: flex; flex-direction: column; } .sidebar { border-right: 0; padding: 24px 20px 0; } .intro { margin-bottom: 16px; } .dataset, .filters { margin-top: 16px; padding-top: 14px; } .explorer { padding: 24px 20px; } .stage { height: 60vh; min-height: 400px; } .graph-footer { flex-wrap: wrap; } .site-footer { padding: 18px 20px; flex-direction: column; gap: 8px; } }

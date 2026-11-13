@@ -33,6 +33,14 @@
           || (layout.repulsion !== undefined && (!Number.isFinite(layout.repulsion) || layout.repulsion < 0.25 || layout.repulsion > 4))
           || (layout.gameAttraction !== undefined && (!Number.isFinite(layout.gameAttraction) || layout.gameAttraction < 0 || layout.gameAttraction > 4))
           || (layout.spanningTree !== undefined && typeof layout.spanningTree !== "boolean")
+          || ["minRank", "maxRank"].some(key => layout[key] !== undefined && layout[key] !== ""
+            && (!Number.isInteger(layout[key]) || layout[key] < 1 || layout[key] > 49))
+          || (layout.minRank && layout.maxRank && layout.minRank > layout.maxRank)
+          || ["focusPin", "selectedPin"].some(key => layout[key] !== undefined && (typeof layout[key] !== "string" || (layout[key] !== "" && !/^\d+$/.test(layout[key]))))
+          || (layout.pathPins !== undefined && (!Array.isArray(layout.pathPins) || layout.pathPins.length !== 2
+            || !layout.pathPins.every(pin => typeof pin === "string" && /^\d+$/.test(pin))))
+          || (layout.viewport !== undefined && (!layout.viewport || !["scale", "panX", "panY"].every(key => Number.isFinite(layout.viewport[key]))
+            || layout.viewport.scale < 0.05 || layout.viewport.scale > 8 || Math.abs(layout.viewport.panX) > 100000000 || Math.abs(layout.viewport.panY) > 100000000))
           || (layout.visibleCountries !== undefined && (!Array.isArray(layout.visibleCountries)
             || !layout.visibleCountries.every(country => typeof country === "string" && country.length > 0)))
           || !["country", "start", "end"].every(key => typeof layout[key] === "string")) {
@@ -130,14 +138,58 @@
     }
     return {players: Array.from(players.values()), links: Array.from(pairs.values()), gameCount: seen.size};
   }
-  function selectGraph(model, limit, minimum, country = "") {
+  function selectGraph(model, limit, minimum, country = "", options = {}) {
     const countries = new Set((Array.isArray(country) ? country : country ? [country] : []).map(code => code === "__unknown__" ? "" : code));
-    const players = model.players.filter(player => !countries.size || countries.has(player.country))
-      .sort((a, b) => b.games - a.games || (a.pin < b.pin ? -1 : a.pin > b.pin ? 1 : 0)).slice(0, limit);
+    const neighbours = new Set(options.focusPin ? [options.focusPin] : []);
+    if (options.focusPin) for (const link of model.links) {
+      if (link.games < minimum) continue;
+      if (link.a === options.focusPin) neighbours.add(link.b);
+      if (link.b === options.focusPin) neighbours.add(link.a);
+    }
+    const players = model.players.filter(player => {
+      const rank = rankValue(player.grade);
+      return (!countries.size || countries.has(player.country))
+        && (!options.focusPin || neighbours.has(player.pin))
+        && ((!options.minRank && !options.maxRank) || (rank !== null
+          && (!options.minRank || rank >= options.minRank) && (!options.maxRank || rank <= options.maxRank)));
+    })
+      .sort((a, b) => Number(b.pin === options.focusPin) - Number(a.pin === options.focusPin)
+        || b.games - a.games || (a.pin < b.pin ? -1 : a.pin > b.pin ? 1 : 0)).slice(0, limit);
     const pins = new Set(players.map(player => player.pin));
     const links = model.links.filter(link => pins.has(link.a) && pins.has(link.b) && link.games >= minimum);
+    if (options.focusPin) {
+      const neighbours = new Set([options.focusPin]);
+      for (const link of links) {
+        if (link.a === options.focusPin) neighbours.add(link.b);
+        if (link.b === options.focusPin) neighbours.add(link.a);
+      }
+      const focused = links.filter(link => neighbours.has(link.a) && neighbours.has(link.b));
+      const connected = new Set(focused.flatMap(link => [link.a, link.b]));
+      return {players: players.filter(player => connected.has(player.pin)), links: focused};
+    }
     const connected = new Set(links.flatMap(link => [link.a, link.b]));
     return {players: players.filter(player => connected.has(player.pin)), links};
+  }
+  // Breadth-first search finds the fewest opponent connections, independent of game counts.
+  function shortestPath(links, from, to) {
+    const neighbours = new Map();
+    for (const {a, b} of links) {
+      if (!neighbours.has(a)) neighbours.set(a, []);
+      if (!neighbours.has(b)) neighbours.set(b, []);
+      neighbours.get(a).push(b); neighbours.get(b).push(a);
+    }
+    if (!neighbours.has(from) || !neighbours.has(to)) return null;
+    const previous = new Map([[from, null]]), queue = [from];
+    for (let i = 0; i < queue.length; i++) {
+      const pin = queue[i];
+      if (pin === to) {
+        const path = [];
+        for (let p = to; p !== null; p = previous.get(p)) path.push(p);
+        return path.reverse();
+      }
+      for (const next of neighbours.get(pin)) if (!previous.has(next)) { previous.set(next, pin); queue.push(next); }
+    }
+    return null;
   }
   function rankValue(grade) {
     const match = /^(\d+)([kdp])$/i.exec(grade);
@@ -146,11 +198,13 @@
     if (n < 1 || n > (unit === "k" ? 30 : 9)) return null;
     return unit === "k" ? 31 - n : unit === "d" ? 30 + n : 40 + n;
   }
+  const searchIndex = new WeakMap();
+  const normalise = value => value.normalize("NFD").replace(/\p{M}/gu, "").toLocaleLowerCase();
   function searchPlayers(players, query) {
-    const normalise = value => value.normalize("NFD").replace(/\p{M}/gu, "").toLocaleLowerCase();
     const needle = normalise(query.trim());
-    return players.filter(player => normalise(`${player.name} ${player.pin}`).includes(needle))
-      .sort((a, b) => Number(normalise(b.name).startsWith(needle)) - Number(normalise(a.name).startsWith(needle))
+    for (const player of players) if (!searchIndex.has(player)) searchIndex.set(player, {name: normalise(player.name), text: normalise(`${player.name} ${player.pin}`)});
+    return players.filter(player => searchIndex.get(player).text.includes(needle))
+      .sort((a, b) => Number(searchIndex.get(b).name.startsWith(needle)) - Number(searchIndex.get(a).name.startsWith(needle))
         || a.name.localeCompare(b.name) || a.pin.localeCompare(b.pin));
   }
   function countryKey(country) {
@@ -180,7 +234,7 @@
     if (!Number.isInteger(games) || games < 1) return null;
     return gamesBands.findLast(band => games >= band.min);
   }
-  const api = {validateSnapshot, parseEgd, buildModel, selectGraph, rankValue, searchPlayers, sameCountryBand, sameCountryBands, gamesBand, gamesBands};
+  const api = {validateSnapshot, parseEgd, buildModel, selectGraph, shortestPath, rankValue, searchPlayers, sameCountryBand, sameCountryBands, gamesBand, gamesBands};
   root.EgdGraph = api;
   if (typeof module !== "undefined") module.exports = api;
 })(globalThis);
