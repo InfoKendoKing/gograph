@@ -1,7 +1,7 @@
 "use strict";
 (() => {
   const $ = id => document.getElementById(id);
-  const canvas = $("graph"), stage = $("stage"), context = canvas.getContext("2d");
+  const canvas = $("graph"), stage = $("stage"), viewport = $("graph-viewport"), context = canvas.getContext("2d");
   const visibleCountryChooser = EgdCountries.setup($("visible-countries"), $("visible-countries-toggle"), $("visible-countries-options"), $("visible-countries-current"), $("visible-countries-box"), $("visible-countries-clear"));
   const {validateSnapshot, selectGraph, rankValue, searchPlayers, sameCountryBand, sameCountryBands, gamesBand, gamesBands} = EgdGraph;
   let snapshot, countryIndices = new Map(), model, nodes = [], links = [], nodeMap = new Map();
@@ -14,6 +14,8 @@
   let positions = Object.create(null), focusPin = "", pathPins = [], currentPath = null, revealCandidate = null;
   let layoutWorker = null, layoutVersion = 0, layoutPending = false;
   const settler = EgdLayout.createSettler();
+  const mobileFilters = matchMedia("(max-width: 900px)");
+  let drawerReturnFocus = null;
   for (const id of ["min-rank", "max-rank"]) {
     for (const grade of [...Array.from({length: 30}, (_, i) => `${30 - i}k`),
       ...Array.from({length: 9}, (_, i) => `${i + 1}d`), ...Array.from({length: 9}, (_, i) => `${i + 1}p`)]) {
@@ -38,6 +40,74 @@
     $("status").textContent = message;
     $("status").classList.toggle("error", error);
   }
+  function setFilterDrawer(open, restoreFocus = true) {
+    const wasOpen = document.body.classList.contains("filters-open");
+    open = open && mobileFilters.matches;
+    if (open && !wasOpen) drawerReturnFocus = document.activeElement;
+    document.body.classList.toggle("filters-open", open);
+    $("filters-toggle").setAttribute("aria-expanded", String(open));
+    $("filters-backdrop").hidden = !open;
+    $("filters-panel").inert = mobileFilters.matches && !open;
+    if (open) {
+      $("filters-panel").setAttribute("role", "dialog");
+      $("filters-panel").setAttribute("aria-modal", "true");
+      $("filters-close").focus({preventScroll: true});
+    } else {
+      $("filters-panel").removeAttribute("role");
+      $("filters-panel").removeAttribute("aria-modal");
+      if (wasOpen && restoreFocus && mobileFilters.matches) (drawerReturnFocus || $("filters-toggle")).focus({preventScroll: true});
+    }
+  }
+  function renderCounts(players, connections, games) {
+    $("counts").replaceChildren(...[[players, "Players"], [connections, "Connections"], [games, "Games"]].map(([value, label]) => {
+      const item = document.createElement("div"), number = document.createElement("strong"), caption = document.createElement("span");
+      item.className = "network-stat"; number.textContent = value.toLocaleString(); caption.textContent = label;
+      item.append(number, caption); return item;
+    }));
+    $("counts").setAttribute("aria-label", `${players.toLocaleString()} visible players, ${connections.toLocaleString()} connections, ${games.toLocaleString()} games`);
+  }
+  function resetFilters() {
+    if (!snapshot) return;
+    $("start").value = $("end").value = $("min-rank").value = $("max-rank").value = "";
+    $("limit").value = "15000"; $("minimum").value = "1";
+    for (const option of $("visible-countries").options) option.selected = option.value === "";
+    visibleCountryChooser.refresh(); highlightedCountry = ""; focusPin = ""; pathPins = [];
+    rebuild({fitView: true});
+  }
+  function renderActiveFilters() {
+    const chips = [], countries = visibleCountries();
+    const clear = (...ids) => { for (const id of ids) $(id).value = ""; };
+    if (countries.length) chips.push([countries.length === 1 ? EgdCountries.countryName(countries[0]) : `${countries.length} countries`, () => {
+      for (const option of $("visible-countries").options) option.selected = option.value === "";
+      visibleCountryChooser.refresh();
+    }]);
+    const start = $("start").value, end = $("end").value;
+    if (start || end) chips.push([start && end ? `${start} → ${end}` : start ? `Since ${start}` : `Until ${end}`, () => clear("start", "end")]);
+    if ($("min-rank").value || $("max-rank").value) {
+      const min = $("min-rank").value ? $("min-rank").selectedOptions[0].textContent : "Any";
+      const max = $("max-rank").value ? $("max-rank").selectedOptions[0].textContent : "Any";
+      chips.push([`Rank: ${min} to ${max}`, () => clear("min-rank", "max-rank")]);
+    }
+    if (Number($("minimum").value) > 1) chips.push([`${$("minimum").value}+ shared games`, () => { $("minimum").value = "1"; }]);
+    if (Number($("limit").value) !== 15000) chips.push([`Top ${Number($("limit").value).toLocaleString()} players`, () => { $("limit").value = "15000"; }]);
+    if (highlightedCountry) chips.push([`${EgdCountries.countryName(highlightedCountry)} highlighted`, () => { highlightedCountry = ""; }]);
+    $("active-filters").replaceChildren(...chips.map(([label, remove]) => {
+      const button = document.createElement("button"), cross = document.createElement("span");
+      button.type = "button"; button.className = "filter-chip"; button.setAttribute("aria-label", `Remove filter: ${label}`);
+      cross.textContent = "×"; cross.setAttribute("aria-hidden", "true"); button.append(document.createTextNode(label), cross);
+      button.addEventListener("click", () => { remove(); rebuild(); }); return button;
+    }));
+    $("active-filters").hidden = !chips.length;
+    $("filter-count").textContent = String(chips.length); $("filter-count").hidden = !chips.length;
+    $("reset-filters").disabled = !snapshot || (!chips.length && !focusPin && !pathPins.length);
+  }
+  function filterFailure(message, ids) {
+    $("filter-error").textContent = message; $("filter-error").hidden = false;
+    $("advanced-filters").open = true;
+    $("reset-filters").disabled = false;
+    for (const id of ids) { $(id).setAttribute("aria-invalid", "true"); $(id).setAttribute("aria-describedby", "filter-error"); }
+    status(message, true);
+  }
   EgdFullscreen.setup(stage, $("fullscreen"), canvas, message => status(message, true));
   const hoverHighlight = EgdHover.create({
     canHighlight: (node, point) => !gesture && $("hover-highlight").checked && hit(point.x, point.y) === node,
@@ -54,6 +124,7 @@
     syncLayout();
     $("pause").textContent = value ? "Resume" : "Pause";
     $("pause").setAttribute("aria-pressed", String(value));
+    $("layout-state").classList.toggle("is-paused", value);
     $("layout-state").textContent = value ? "Layout paused" : "Layout settling";
   }
   function defaultDateRange() {
@@ -70,6 +141,9 @@
     model = null;
     ++rebuildId;
     nodes = []; links = []; nodeMap.clear();
+    dirty = true;
+    $("graph-loading").hidden = false;
+    stage.classList.remove("has-selection"); $("player-panel").hidden = true;
     positions = Object.assign(Object.create(null), data.layout?.positions);
     focusPin = data.layout?.focusPin || ""; pathPins = data.layout?.pathPins || [];
     currentPath = null; revealCandidate = null;
@@ -119,8 +193,10 @@
       if (!lastDate || game.date > lastDate) lastDate = game.date;
     }
     const incomplete = /incomplete/i.test(data.description);
-    $("dataset-summary").textContent = `${data.games.length.toLocaleString()} games loaded${firstDate ? ` · ${firstDate} to ${lastDate}` : ""}${incomplete ? " · INCOMPLETE dataset" : ""}`;
+    const dateLabel = value => new Intl.DateTimeFormat("en-GB", {day: "numeric", month: "short", year: "numeric", timeZone: "UTC"}).format(new Date(value + "T00:00:00Z"));
+    $("dataset-summary").textContent = `${data.games.length.toLocaleString()} games${firstDate ? ` · ${dateLabel(firstDate)} — ${dateLabel(lastDate)}` : ""}${incomplete ? " · INCOMPLETE dataset" : ""}`;
     $("dataset-summary").classList.toggle("error", incomplete);
+    $("snapshot-badge").textContent = firstDate ? `${firstDate.slice(0, 4)} — ${lastDate.slice(0, 4)}` : "EGD snapshot";
     status("Preparing player search and graph…");
     const fullModel = await source.getModel();
     if (source !== dataSource || !fullModel) return false;
@@ -140,14 +216,17 @@
   async function rebuild({fitView = false} = {}) {
     if (!snapshot) return;
     const request = ++rebuildId, source = dataSource;
+    $("filter-error").hidden = true;
+    for (const id of ["start", "end", "minimum", "min-rank", "max-rank"]) { $(id).removeAttribute("aria-invalid"); $(id).removeAttribute("aria-describedby"); }
+    renderActiveFilters();
     building = false; stage.setAttribute("aria-busy", "false");
     $("save-view").disabled = !snapshot; $("find-path").disabled = !model;
     const start = $("start").value, end = $("end").value;
-    if (start && end && start > end) { status("The start date must be on or before the end date.", true); return; }
+    if (start && end && start > end) { filterFailure("The start date must be on or before the end date.", ["start", "end"]); return; }
     const minimum = Number($("minimum").value);
-    if (!Number.isInteger(minimum) || minimum < 1 || minimum > 100000) { status("Shared games must be a whole number from 1 to 100000.", true); return; }
+    if (!Number.isInteger(minimum) || minimum < 1 || minimum > 100000) { filterFailure("Shared games must be a whole number from 1 to 100000.", ["minimum"]); return; }
     const minRank = Number($("min-rank").value), maxRank = Number($("max-rank").value);
-    if (minRank && maxRank && minRank > maxRank) { status("Lowest rank must be no stronger than highest rank.", true); return; }
+    if (minRank && maxRank && minRank > maxRank) { filterFailure("Lowest rank must be no stronger than highest rank.", ["min-rank", "max-rank"]); return; }
     building = true;
     stage.setAttribute("aria-busy", "true");
     $("save-view").disabled = true;
@@ -177,11 +256,12 @@
       ticks = 0;
       settler.reset(); syncLayout();
       const displayedGames = links.reduce((total, link) => total + link.games, 0);
-      $("counts").textContent = `${nodes.length.toLocaleString()} players / ${links.length.toLocaleString()} connections / ${displayedGames.toLocaleString()} games`;
+      renderCounts(nodes.length, links.length, displayedGames);
       $("empty").hidden = nodes.length > 0;
       $("export-png").disabled = $("export-svg").disabled = $("export-gexf").disabled = !nodes.length;
       status(`${model.gameCount.toLocaleString()} unique games in the selected dates. Displayed players must share a qualifying connection.`);
       $("layout-state").textContent = nodes.length ? (paused ? (snapshot.layout ? "Saved layout · paused" : "Layout paused") : "Layout settling") : "No visible connections";
+      $("layout-state").classList.toggle("is-paused", paused || !nodes.length);
       if (fitView || !hadNodes) fit();
       renderLegend(); renderPlayerOptions(); renderDetails(); renderExploration();
       updateCountryHighlight();
@@ -190,6 +270,7 @@
     } finally {
       if (request === rebuildId) {
         building = false; stage.setAttribute("aria-busy", "false");
+        $("graph-loading").hidden = true;
         $("save-view").disabled = !snapshot; $("find-path").disabled = !model;
       }
     }
@@ -206,13 +287,13 @@
     const activeFilters = Number(Boolean($("start").value || $("end").value))
       + Number(Number($("limit").value) !== 15000) + Number(Number($("minimum").value) > 1)
       + Number(Boolean($("min-rank").value || $("max-rank").value));
-    $("advanced-filters-summary").textContent = `Advanced filters${activeFilters ? ` (${activeFilters} active)` : ""}`;
-    $("graph-title").textContent = country ? `${country === "__unknown__" ? "Unknown country" : country} highlighted` : "Player connections";
+    $("advanced-filters-summary").textContent = `Dates, ranks & connections${activeFilters ? ` (${activeFilters})` : ""}`;
+    $("graph-title").textContent = country ? `${EgdCountries.countryName(country)} highlighted` : activeFilters || visibleCountries().length ? "Filtered network" : "All players";
     if (model) {
       status(country ? `${nodes.filter(matchesCountry).length.toLocaleString()} visible players from ${country === "__unknown__" ? "an unknown country" : country} highlighted.`
         : `${model.gameCount.toLocaleString()} unique games in the selected dates. Displayed players must share a qualifying connection.`);
     }
-    renderLegend(); dirty = true;
+    renderActiveFilters(); renderLegend(); dirty = true;
   }
   function colour(node) {
     if ($("colour").value === "country") return EgdColours.countryColour(countryIndices.get(node.country), $("colour-blind-friendly").checked);
@@ -387,6 +468,8 @@
     hoverHighlight.clear();
     selected = nodeMap.has(pin) ? pin : null;
     renderPlayerOptions(); renderDetails(); dirty = true;
+    $("player-panel").scrollTop = 0;
+    if (selected && matchMedia("(max-width: 650px)").matches) stage.scrollIntoView({block: "start"});
   }
   function sameCountrySummary(node) {
     return node.sameCountryPercent === null ? "Same-country share unavailable (unknown country)"
@@ -404,12 +487,26 @@
     const box = $("player-details"); box.replaceChildren();
     const node = nodeMap.get(selected);
     $("player-panel").hidden = !node;
+    stage.classList.toggle("has-selection", Boolean(node));
+    $("fit").textContent = node ? "Fit player" : "Fit graph";
+    $("fit").title = node ? "Fit this player and their visible opponents (Home)" : "Fit all visible players (Home)";
     if (!node) return;
     const heading = document.createElement("h2"), info = document.createElement("p"), profile = document.createElement("a");
     heading.textContent = node.name;
-    info.textContent = `${node.country || "Unknown country"} · ${node.grade || "Unknown rank"} · ${node.games} games in the selected dates · ${sameCountrySummary(node)}`;
-    if ($("colour").value === "rank-change") info.textContent += ` · ${rankChangeSummary(node)}`;
-    profile.textContent = "Open EGD player profile ↗";
+    info.className = "player-meta";
+    const flag = document.createElement("img"); flag.src = EgdCountries.flagPath(node.country); flag.alt = "";
+    info.append(flag, document.createTextNode(`${EgdCountries.countryName(node.country)} · ${node.grade || "Unknown rank"} · ${node.pin}`));
+    const opponents = links.filter(link => link.a === node || link.b === node).map(link =>
+      ({node: link.a === node ? link.b : link.a, games: link.games})).sort((a, b) => b.games - a.games || a.node.name.localeCompare(b.node.name));
+    const metrics = document.createElement("div"); metrics.className = "player-metrics";
+    for (const [value, label] of [[node.games, "Games in selected dates"], [opponents.length, "Visible opponents"]]) {
+      const item = document.createElement("div"), number = document.createElement("strong"), caption = document.createElement("span");
+      number.textContent = value.toLocaleString(); caption.textContent = label; item.append(number, caption); metrics.append(item);
+    }
+    const insight = document.createElement("p"); insight.className = "fine-print";
+    insight.textContent = sameCountrySummary(node);
+    if ($("colour").value === "rank-change") insight.textContent += ` · ${rankChangeSummary(node)}`;
+    profile.textContent = "EGD profile ↗";
     profile.href = EgdSharing.egdProfileUrl(node.pin);
     profile.target = "_blank"; profile.rel = "noopener noreferrer";
     const share = document.createElement("button"), shareStatus = document.createElement("p"), shareUrl = document.createElement("input");
@@ -442,7 +539,7 @@
     imagePath.setAttribute("d", "M4 3h16a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z M3 17l6-6 5 5 3-3 4 4 M9 7h.01");
     imagePath.setAttribute("stroke-linecap", "round"); imagePath.setAttribute("stroke-linejoin", "round");
     imageIcon.append(imagePath);
-    const generateLabel = document.createElement("span"); generateLabel.textContent = "Generate graph image";
+    const generateLabel = document.createElement("span"); generateLabel.textContent = "Share Graph Image";
     generate.append(imageIcon, generateLabel);
     imagePreview.className = "profile-image-preview"; imagePreview.hidden = true;
     imagePreview.alt = `${node.name}'s highlighted graph`;
@@ -460,7 +557,7 @@
         if (profileImageUrl) URL.revokeObjectURL(profileImageUrl);
         profileImageUrl = URL.createObjectURL(blob); imagePreview.src = profileImageUrl;
         imagePreview.hidden = imageActions.hidden = false;
-        generateLabel.textContent = "Regenerate graph image"; imageStatus.textContent = "Square image ready.";
+        imageStatus.textContent = "Square image ready.";
       } catch (error) {imageStatus.textContent = "Could not generate image: " + error.message;}
       finally {generate.disabled = false;}
     });
@@ -480,10 +577,8 @@
     });
     imageActions.append(downloadImage, shareImage);
     imageTools.append(generate, imagePreview, imageActions, imageStatus);
-    const opponents = links.filter(link => link.a === node || link.b === node).map(link =>
-      ({node: link.a === node ? link.b : link.a, games: link.games})).sort((a, b) => b.games - a.games || a.node.name.localeCompare(b.node.name));
     const extra = document.createElement("details"), label = document.createElement("summary");
-    label.textContent = `${opponents.length} opponents & profile`;
+    label.textContent = `Opponents (${opponents.length.toLocaleString()})`;
     const explanation = document.createElement("p"); explanation.className = "fine-print";
     explanation.textContent = "Visible opponents · games played together";
     const list = document.createElement("ul"); list.className = "opponents";
@@ -493,9 +588,10 @@
       count.textContent = `${opponent.games} ${opponent.games === 1 ? "game" : "games"}`;
       item.append(button, count); list.append(item);
     }
-    extra.append(label, profile, explanation, list);
+    extra.append(label, explanation, list);
     const explore = document.createElement("div"), isolate = document.createElement("button"), pathFrom = document.createElement("button"), pathTo = document.createElement("button");
     explore.className = "player-explore-actions";
+    isolate.className = "primary";
     isolate.type = pathFrom.type = pathTo.type = "button";
     isolate.textContent = "Show player and opponents";
     isolate.addEventListener("click", () => {
@@ -507,7 +603,9 @@
       $("path-tools").scrollIntoView({block: "nearest"});
     });
     explore.append(isolate, pathFrom, pathTo);
-    box.append(heading, info, explore, share, shareStatus, shareUrl, imageTools, extra);
+    const profileLinks = document.createElement("div"); profileLinks.className = "profile-links";
+    profileLinks.append(share, profile);
+    box.append(heading, info, metrics, explore, profileLinks, shareStatus, shareUrl, extra, insight, imageTools);
   }
   function fit() {
     hoverHighlight.clear();
@@ -643,12 +741,12 @@
     requestAnimationFrame(animate);
   }
   new ResizeObserver(() => {
-    const nextWidth = stage.clientWidth, nextHeight = stage.clientHeight;
+    const nextWidth = viewport.clientWidth, nextHeight = viewport.clientHeight;
     const ratio = Math.min(devicePixelRatio || 1, 2);
     if (width === nextWidth && height === nextHeight && canvas.width === Math.round(nextWidth * ratio) && canvas.height === Math.round(nextHeight * ratio)) return;
     width = nextWidth; height = nextHeight;
     canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio); fit();
-  }).observe(stage);
+  }).observe(viewport);
   canvas.addEventListener("pointerdown", event => {
     const point = position(event);
     if (event.pointerType === "touch") {
@@ -729,6 +827,7 @@
     if (event.key === "+" || event.key === "=") zoom(1.2);
     if (event.key === "-") zoom(1 / 1.2);
     if (event.key === "Home") fit();
+    if (event.key === "Escape") choose(null);
     if (event.key === "ArrowUp") panY += 30;
     if (event.key === "ArrowDown") panY -= 30;
     if (event.key === "ArrowLeft") panX += 30;
@@ -740,6 +839,31 @@
   $("zoom-out").addEventListener("click", () => zoom(1 / 1.2));
   $("pause").addEventListener("click", () => pause(!paused));
   $("player-close").addEventListener("click", () => { choose(null); canvas.focus({preventScroll: true}); });
+  $("filters-toggle").addEventListener("click", () => setFilterDrawer(true));
+  for (const id of ["filters-close", "filters-done", "filters-backdrop"]) $(id).addEventListener("click", () => setFilterDrawer(false));
+  for (const id of ["reset-filters", "empty-reset"]) $(id).addEventListener("click", resetFilters);
+  mobileFilters.addEventListener("change", () => setFilterDrawer(false, false));
+  document.addEventListener("keydown", event => {
+    if (event.isComposing) return;
+    if (document.body.classList.contains("filters-open")) {
+      if (event.key === "Escape") { event.preventDefault(); setFilterDrawer(false); return; }
+      if (event.key === "Tab") {
+        const focusable = [...$("filters-panel").querySelectorAll('button:not(:disabled), input:not([type="hidden"]):not(:disabled), select:not(:disabled), summary, a[href]')]
+          .filter(element => element.getClientRects().length > 0);
+        const first = focusable[0], last = focusable.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+      return;
+    }
+    const editing = event.target.closest('input, textarea, select, [contenteditable="true"]');
+    if ((event.key.toLowerCase() === "k" && (event.ctrlKey || event.metaKey)) || (event.key === "/" && !editing && !event.ctrlKey && !event.metaKey && !event.altKey)) {
+      event.preventDefault(); $("player-search").focus(); $("player-search").select();
+    }
+  });
+  $("swap-path").addEventListener("click", () => {
+    const from = $("path-from").value; $("path-from").value = $("path-to").value; $("path-to").value = from;
+  });
   for (const menu of document.querySelectorAll(".action-menu")) {
     menu.addEventListener("click", event => { if (event.target.closest("button")) menu.open = false; });
     menu.addEventListener("keydown", event => {
@@ -780,11 +904,11 @@
       $("path-status").textContent = "Choose both players from the suggestions, enter their PINs, or use unique full names."; return;
     }
     $("path-from").value = playerLabel(from.pin); $("path-to").value = playerLabel(to.pin);
-    focusPin = ""; pathPins = [from.pin, to.pin];
+    focusPin = ""; selected = null; pathPins = [from.pin, to.pin];
     await rebuild({fitView: true});
   });
   $("clear-exploration").addEventListener("click", () => {
-    focusPin = ""; pathPins = []; rebuild({fitView: true});
+    focusPin = ""; pathPins = []; selected = null; rebuild({fitView: true});
   });
   $("open-view").addEventListener("click", () => $("view-file").click());
   $("view-file").addEventListener("change", async () => {
@@ -866,11 +990,12 @@
       if (id === loadId && await install(data) && id === loadId) await openLinkedPlayer();
     } catch (error) {
       if (id === loadId) {
+        $("graph-loading").hidden = true; stage.setAttribute("aria-busy", "false");
         status("Could not load the published snapshot. Serve the project folder over HTTP, or open a saved view. " + error.message, true);
-        if (!snapshot) { $("dataset-summary").textContent = "Published snapshot unavailable"; $("counts").textContent = "No games loaded"; $("empty").hidden = false; $("layout-state").textContent = "Waiting for data"; }
+        if (!snapshot) { $("dataset-summary").textContent = "Published snapshot unavailable"; renderCounts(0, 0, 0); $("empty").hidden = false; $("layout-state").textContent = "Waiting for data"; }
       }
     }
   }
   const localDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  pause(paused); requestAnimationFrame(animate); loadPublished();
+  setFilterDrawer(false, false); pause(paused); requestAnimationFrame(animate); loadPublished();
 })();

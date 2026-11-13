@@ -9,7 +9,7 @@
     <script defer src="graph-hover.js?v=37b913b7825e"></script>
     <script defer src="graph-colours.js?v=a15ff6398e15"></script>
     <link rel="icon" href="logo.svg?v=4ded6dde900b" type="image/svg+xml">
-    <link rel="stylesheet" href="styles.css?v=7e7566567b0a">
+    <link rel="stylesheet" href="styles.css?v=0aa13ae427df">
     <script defer src="graph-model.js?v=12e8f4f91e56"></script>
     <script defer src="graph-data.js?v=d9f391b45e9d"></script>
     <script defer src="graph-layout.js?v=b2206a3f054f"></script>
@@ -20,19 +20,20 @@
     <script defer src="graph-fullscreen.js?v=04088a72ee13"></script>
     <script defer src="graph-sharing.js?v=dc87f0f728b3"></script>
     <script defer src="graph-profile-image.js?v=27588460eb75"></script>
-    <script defer src="viewer.js?v=3c783f7436a8"></script>
+    <script defer src="viewer.js?v=f4f57e90a792"></script>
   </head>
   <body data-snapshot-compressed="data/games.json.gz?v=d6e30b13911c" data-snapshot="data/games.json?v=b84be0af116a">
+    <a class="skip-link" href="#player-search">Skip to the graph</a>
     <header class="masthead">
-      <a class="brand" href="./"><img class="logo" src="logo.svg?v=4ded6dde900b" width="36" height="36" alt=""> European Go Graph</a>
-      <a class="source-link" href="https://europeangodatabase.eu/v2" target="_blank" rel="noopener noreferrer">European Go Database ↗</a>
+      <a class="brand" href="./"><img class="logo" src="logo.svg?v=4ded6dde900b" width="32" height="32" alt=""><span>European Go Graph<small>The tournament network</small></span></a>
+      <div class="masthead-links"><span id="snapshot-badge" class="snapshot-badge">EGD snapshot</span><a class="source-link" href="https://europeangodatabase.eu/v2" target="_blank" rel="noopener noreferrer">Visit EGD <span aria-hidden="true">↗</span></a></div>
     </header>
+    <button id="filters-backdrop" class="filters-backdrop" type="button" aria-label="Close filters" tabindex="-1" hidden></button>
     <main>
-      <aside class="sidebar">
-        <h1>Player graph</h1>
-        <p class="intro">Explore player connections in EGD tournament games.</p>
+      <aside id="filters-panel" class="sidebar" aria-labelledby="filters-title">
+        <div class="sidebar-heading"><div><span class="eyebrow">Make it your view</span><h2 id="filters-title">Explore the network</h2></div><button id="filters-close" class="icon-button mobile-only" type="button" aria-label="Close filters">×</button></div>
+        <div class="sidebar-subheading"><p class="fine-print">Filters update the graph instantly.</p><button id="reset-filters" class="text-button" type="button" disabled>Reset all</button></div>
         <section class="filters" aria-label="View">
-          <span class="section-label">View</span>
           <label id="visible-countries-label" for="visible-countries-toggle">Show countries</label>
           <div id="visible-countries-box" class="country-box">
             <select id="visible-countries" multiple hidden aria-label="Show countries"><option value="">All countries</option></select>
@@ -42,12 +43,12 @@
             </div>
             <ul id="visible-countries-options" class="country-options" role="listbox" aria-multiselectable="true" aria-label="Countries to show" hidden></ul>
           </div>
-          <p class="fine-print">Choose one or more countries to show only their players and connections between them. Clear to show all countries.</p>
+          <p class="fine-print">Choose countries to explore their players together.</p>
           <label for="colour">Colour by</label>
           <select id="colour"><option value="country">Country</option><option value="rank">Rank</option><option value="rank-change">Rank change</option><option value="same-country">Games against own country (%)</option><option value="games">Games played</option></select>
-          <div id="legend" class="legend" aria-label="Colour legend"></div>
+          <details class="legend-section" open><summary>Colour key <span class="summary-note">Click a country to highlight</span></summary><div id="legend" class="legend" aria-label="Colour legend"></div></details>
           <details id="advanced-filters" class="settings-group">
-            <summary id="advanced-filters-summary">Advanced filters</summary>
+            <summary id="advanced-filters-summary">Dates, ranks &amp; connections</summary>
             <div class="field-pair">
               <div><label for="limit">Player limit</label><select id="limit"><option>50</option><option>100</option><option>200</option><option>400</option><option>600</option><option>1000</option><option>2000</option><option>4000</option><option>7000</option><option>10000</option><option selected>15000</option></select></div>
               <div><label for="minimum">Minimum games between players</label><input id="minimum" type="number" min="1" max="100000" value="1" step="1"></div>
@@ -62,6 +63,10 @@
               <div><label for="max-rank">Highest rank</label><select id="max-rank"><option value="">Any rank</option></select></div>
             </div>
             <p class="fine-print">Uses each player's latest recorded rank in the selected dates. Unknown ranks appear when both limits are cleared.</p>
+            <p id="filter-error" class="field-error" role="alert" hidden></p>
+          </details>
+          <details class="settings-group">
+            <summary>Arrange the graph</summary>
             <label for="repulsion">Node repulsion <output id="repulsion-value" for="repulsion">1×</output></label>
             <input id="repulsion" type="range" min="0.25" max="4" step="0.25" value="1">
             <p class="fine-print">Move right to spread players farther apart. Changing this resumes the layout.</p>
@@ -83,16 +88,21 @@
         <section class="dataset" aria-label="Dataset">
           <span class="section-label">Loaded games</span>
           <p id="dataset-summary" class="fine-print">Loading the published snapshot…</p>
-          <button id="open-view" type="button">Open saved view…</button>
+          <button id="open-view" class="secondary-button" type="button">Open saved view <span aria-hidden="true">↗</span></button>
           <input id="view-file" type="file" accept=".json,application/json" hidden>
         </section>
+        <div class="drawer-footer mobile-only"><button id="filters-done" class="primary" type="button">Show graph <span aria-hidden="true">→</span></button></div>
       </aside>
       <section class="explorer" aria-label="Interactive player graph">
+        <div class="explorer-heading"><div><span class="eyebrow">Every game is a connection</span><h1>Player connections</h1><p class="intro">Find your place in European Go.</p></div><div id="counts" class="network-summary" aria-label="Graph statistics"><div class="network-stat"><strong>—</strong><span>Players</span></div><div class="network-stat"><strong>—</strong><span>Connections</span></div><div class="network-stat"><strong>—</strong><span>Games</span></div></div></div>
         <div class="explorer-toolbar">
+          <button id="filters-toggle" class="filters-toggle mobile-only" type="button" aria-controls="filters-panel" aria-expanded="false"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6M16 14v6"/></svg>Filters <span id="filter-count" class="count-badge" hidden></span></button>
           <div class="search-tools">
-            <label class="section-label" for="player-search">Find a player</label>
+            <label class="sr-only" for="player-search">Find a player</label>
             <div class="player-search-box">
-              <input id="player-search" type="search" role="combobox" aria-autocomplete="list" aria-controls="player-suggestions" aria-expanded="false" placeholder="Search all players by name or PIN" autocomplete="off">
+              <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+              <input id="player-search" type="search" role="combobox" aria-autocomplete="list" aria-controls="player-suggestions" aria-expanded="false" aria-keyshortcuts="Control+k Meta+k /" placeholder="Find a player by name or PIN" autocomplete="off">
+              <kbd class="search-shortcut" aria-hidden="true">/</kbd>
               <div id="search-results" class="search-results" hidden>
                 <ul id="player-suggestions" role="listbox" aria-label="Matching players"></ul>
                 <p id="search-feedback" class="fine-print" role="status"></p>
@@ -102,12 +112,12 @@
               <p id="reveal-description" class="fine-print"></p>
               <button id="reveal-player-button" type="button">Reveal player and clear filters</button>
             </div>
-            <details class="browse-players"><summary>Browse all players</summary>
+            <details class="browse-players"><summary>Browse visible players</summary>
               <select id="player-select" aria-label="Select a visible player"><option value="">Select a player…</option></select>
             </details>
           </div>
           <details id="export-menu" class="action-menu export-menu">
-            <summary>Save / Export</summary>
+            <summary><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/></svg><span>Save / export</span></summary>
             <div class="action-options">
               <button id="save-view" type="button" disabled>Save arranged view ↓</button>
               <button id="export-png" type="button" disabled>Export PNG ↓</button>
@@ -116,8 +126,9 @@
             </div>
           </details>
         </div>
+        <div id="active-filters" class="filter-chips" aria-label="Active filters" hidden></div>
         <details id="path-tools" class="path-tools">
-          <summary>Find a connection between two players</summary>
+          <summary><span class="path-mark" aria-hidden="true">○—○</span> Find a path between players <span class="summary-note">Who connects you?</span></summary>
           <form id="path-form">
             <div class="field-pair">
               <div><label for="path-from">From player</label><input id="path-from" list="path-players" placeholder="Name or PIN" required autocomplete="off"></div>
@@ -125,7 +136,7 @@
             </div>
             <datalist id="path-players"></datalist>
             <p class="fine-print">Finds the fewest opponent connections within the current date, country, rank, game-count and player-limit filters.</p>
-            <button id="find-path" type="submit" disabled>Find path</button>
+            <div class="path-actions"><button id="find-path" class="primary" type="submit" disabled>Find path <span aria-hidden="true">→</span></button><button id="swap-path" type="button">Swap players ⇄</button></div>
           </form>
           <p id="path-status" class="fine-print" role="status"></p>
           <ol id="path-result"></ol>
@@ -134,30 +145,34 @@
           <span id="exploration-description"></span>
           <button id="clear-exploration" type="button">Back to filtered graph</button>
         </div>
-        <div class="graph-header"><span id="graph-title">Player connections</span><span id="counts">Preparing graph</span></div>
-        <div id="stage" class="stage">
-          <canvas id="graph" tabindex="0" aria-label="Player graph. Right-drag or drag the background to pan, scroll to zoom, or select a player. Use the player search above for keyboard access."></canvas>
-          <div id="empty" class="empty" hidden>No connections match these filters.<small>Try more players, different dates, or fewer shared games.</small></div>
-          <div id="tooltip" class="tooltip" hidden></div>
-          <div class="graph-tools" aria-label="Graph controls">
-            <button id="fit" type="button">Fit graph</button>
-            <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
-            <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
-            <button id="pause" type="button" aria-pressed="false">Pause</button>
-            <button id="fullscreen" type="button" aria-label="Enter fullscreen" aria-pressed="false" aria-controls="stage" title="Show graph fullscreen (F)">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-                <path class="fullscreen-enter" d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"></path>
-                <path class="fullscreen-exit" d="M3 8h5V3M16 3v5h5M21 16h-5v5M8 21v-5H3"></path>
-              </svg>
-            </button>
+        <div class="graph-header"><span id="graph-title">All players</span><span class="graph-hint">Select a dot to explore a player</span></div>
+        <div id="stage" class="stage" aria-busy="true">
+          <div id="graph-viewport" class="graph-viewport">
+            <canvas id="graph" tabindex="0" aria-label="Player graph. Right-drag or drag the background to pan, scroll to zoom, or select a player. Use the player search above for keyboard access."></canvas>
+            <div id="graph-loading" class="graph-loading"><span class="loading-spinner" aria-hidden="true"></span><strong>Mapping the connections</strong><span>Getting the tournament network ready…</span></div>
+            <div class="graph-updating" aria-hidden="true">Updating view…</div>
+            <div id="empty" class="empty" hidden><span class="empty-mark" aria-hidden="true">○ · ○</span><strong>No connections in this view</strong><small>Try a wider date range, more players, or fewer shared games.</small><button id="empty-reset" type="button">Reset filters</button></div>
+            <div id="tooltip" class="tooltip" hidden></div>
+            <div class="graph-tools" aria-label="Graph controls">
+              <button id="fit" type="button">Fit graph</button>
+              <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
+              <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+              <button id="pause" type="button" aria-pressed="false">Pause</button>
+              <button id="fullscreen" type="button" aria-label="Enter fullscreen" aria-pressed="false" aria-controls="stage" title="Show graph fullscreen (F)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                  <path class="fullscreen-enter" d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"></path>
+                  <path class="fullscreen-exit" d="M3 8h5V3M16 3v5h5M21 16h-5v5M8 21v-5H3"></path>
+                </svg>
+              </button>
+            </div>
           </div>
           <aside id="player-panel" class="player-panel" aria-label="Selected player" hidden>
             <div class="player-panel-header"><span class="section-label">Selected player</span><button id="player-close" type="button" aria-label="Close player details" title="Close player details">×</button></div>
             <div id="player-details" aria-live="polite"></div>
           </aside>
         </div>
-        <div class="graph-footer"><span>Right-drag to pan · Scroll to zoom · Select a player for details</span><span id="layout-state">Layout settling</span></div>
-        <p class="graph-caption">Dots are players; lines connect opponents; thicker lines mean more games together. Select a player to isolate their opponents or start a path.</p>
+        <div class="graph-footer"><span><span class="desktop-hint">Drag to pan · Scroll to zoom</span><span class="touch-hint">Drag to pan · Pinch to zoom</span></span><span id="layout-state">Layout settling</span></div>
+        <p class="graph-caption"><span class="caption-dot" aria-hidden="true"></span> Players <span class="caption-line" aria-hidden="true"></span> Shared games <span class="caption-explanation">Larger dots and thicker lines mean more games.</span></p>
         <details class="graph-guide">
           <summary>How it works</summary>
           <p>Each dot is a player. Bigger dots mean more games played in the selected dates. A line joins two players who played each other; thicker lines mean more games together. Colours show the country, rank, or game statistic you choose under <strong>Colour by</strong>.</p>
@@ -166,7 +181,7 @@
         <div id="status" class="status" role="status" aria-live="polite"></div>
       </section>
     </main>
-    <footer class="site-footer"><span>European Go player graph</span><span>Loaded EGD tournament games. Coverage depends on the dataset.</span></footer>
+    <footer class="site-footer"><span>European Go Graph <span aria-hidden="true">/</span> Built around the games we share.</span><span>Powered by the European Go Database</span></footer>
     <noscript><p class="status">Enable JavaScript to explore the graph.</p></noscript>
   </body>
 </html>
